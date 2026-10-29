@@ -175,3 +175,40 @@ func TestTunConfigNarrowsExclusionsToPorts(t *testing.T) {
 		t.Fatal("the relay hostname should still be excluded by domain")
 	}
 }
+
+func TestSSLocalConfigListensLocally(t *testing.T) {
+	srv := Server{ID: "abc", Name: "Apple", Host: "192.0.2.10", Port: "16014",
+		Method: "chacha20-ietf-poly1305", Password: "s3cret"}
+
+	raw, err := sslocalConfig(srv, "127.0.0.1:11080")
+	if err != nil {
+		t.Fatalf("sslocalConfig: %v", err)
+	}
+	cfg := decode(t, raw)
+
+	if cfg["server"] != "192.0.2.10" || cfg["method"] != "chacha20-ietf-poly1305" || cfg["password"] != "s3cret" {
+		t.Fatalf("config does not carry the exit credentials: %v", cfg)
+	}
+	if port, _ := cfg["server_port"].(float64); int(port) != 16014 {
+		t.Fatalf("server_port = %v, want 16014", cfg["server_port"])
+	}
+	if cfg["local_address"] != "127.0.0.1" {
+		t.Fatalf("local_address = %v, want 127.0.0.1", cfg["local_address"])
+	}
+	if port, _ := cfg["local_port"].(float64); int(port) != 11080 {
+		t.Fatalf("local_port = %v, want 11080", cfg["local_port"])
+	}
+}
+
+func TestSSLocalConfigRefusesBadAddresses(t *testing.T) {
+	srv := Server{ID: "abc", Name: "Apple", Host: "192.0.2.10", Port: "http",
+		Method: "chacha20-ietf-poly1305", Password: "s3cret"}
+
+	if _, err := sslocalConfig(srv, "127.0.0.1:11080"); err == nil {
+		t.Fatal("a non-numeric exit port must be refused, not sent to sslocal")
+	}
+	srv.Port = "16014"
+	if _, err := sslocalConfig(srv, "no-address"); err == nil {
+		t.Fatal("a local proxy address without a port must be refused")
+	}
+}

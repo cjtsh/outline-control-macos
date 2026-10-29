@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -82,6 +84,45 @@ func findBackend() string {
 	return ""
 }
 
+// sslocalConfig renders the shadowsocks-rust client configuration for one exit
+// and the local proxy address to listen on.
+func sslocalConfig(srv Server, socks string) ([]byte, error) {
+	host, port, err := net.SplitHostPort(socks)
+	if err != nil {
+		return nil, fmt.Errorf("local proxy address %q: %w", socks, err)
+	}
+	localPort, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, fmt.Errorf("local proxy port %q is not a number", port)
+	}
+	serverPort := atoiOr(srv.Port, 0)
+	if serverPort == 0 {
+		return nil, fmt.Errorf("exit port %q is not a number", srv.Port)
+	}
+	return json.MarshalIndent(map[string]any{
+		"server":        srv.Host,
+		"server_port":   serverPort,
+		"local_address": host,
+		"local_port":    localPort,
+		"method":        srv.Method,
+		"password":      srv.Password,
+	}, "", "  ")
+}
+
+// writeSocksConfig stores the sslocal configuration beside the daemon's other
+// state, at 0600, the same way connectTun stores singbox.json.
+func (t *Tunnel) writeSocksConfig(srv Server, socks string) (string, error) {
+	raw, err := sslocalConfig(srv, socks)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(t.dataDir, "sslocal.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func (t *Tunnel) Status() TunnelStatus {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -122,18 +163,18 @@ func (t *Tunnel) Connect(srv Server) error {
 		return t.connectTun(srv)
 	}
 
-	args := []string{
-		"-b", t.socks,
-		"-s", srv.Address(),
-		"-m", srv.Method,
-		"-k", srv.Password,
-	}
 	// Pick a port that is actually free: a stale client from an earlier run
 	// must not make the whole feature fail.
 	socks := t.freeSocks()
-	args[1] = socks
+	configPath, err := t.writeSocksConfig(srv, socks)
+	if err != nil {
+		t.setError(fmt.Sprintf("cannot write the proxy config: %v", err))
+		return err
+	}
 
-	cmd := exec.Command(t.backend, args...)
+	// The password travels in the 0600 config file, never on the command line:
+	// argv is readable by every local process through ps.
+	cmd := exec.Command(t.backend, "-c", configPath)
 	cmd.Env = append(os.Environ(), "RUST_LOG=warn")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
