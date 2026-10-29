@@ -55,8 +55,17 @@ final class MainWindowController: NSWindowController {
         window.contentView = root
 
         let title = label("Outline Control", size: 22, weight: .bold)
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        let versionChip = monoLabel("v\(version)", size: 10, color: Palette.tertiary)
+        versionChip.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+        versionChip.setContentCompressionResistancePriority(.required, for: .horizontal)
+        versionChip.toolTip = "Outline Control \(version) — the same number as the release on GitHub"
+        let titleRow = NSStackView(views: [title, versionChip, spacer()])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .firstBaseline
+        titleRow.spacing = 8
         let subtitle = label("Exits for this Mac", size: 12, color: Palette.tertiary)
-        let titleStack = NSStackView(views: [title, subtitle])
+        let titleStack = NSStackView(views: [titleRow, subtitle])
         titleStack.orientation = .vertical
         titleStack.alignment = .leading
         titleStack.spacing = 2
