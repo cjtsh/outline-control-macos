@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -111,4 +112,66 @@ func anyList(v any) []string {
 		}
 	}
 	return out
+}
+
+// A whole address excluded from the tunnel takes every other service on that
+// host with it — which is how a Vaultwarden behind the same VPS as the relay
+// became unreachable. Exclusions that only need one port must say so.
+func TestTunConfigNarrowsExclusionsToPorts(t *testing.T) {
+	srv := Server{Name: "Apple", Host: "198.51.100.7", Port: "16014", Method: "chacha20-ietf-poly1305", Password: "secret"}
+	cfg, err := tunConfig(srv, TunOptions{
+		ExcludeHosts:   []string{"relay.example.com"},
+		ExcludeDomains: []string{"relay.example.com"},
+		ExcludeCIDRs:   []string{"203.0.113.10/32"},
+		ExcludePorts:   []int{58371},
+		MTU:            1500,
+	})
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	var parsed struct {
+		Route struct {
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal(cfg, &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var relayRule, resolverRule map[string]any
+	for _, rule := range parsed.Route.Rules {
+		cidrs, _ := rule["ip_cidr"].([]any)
+		for _, raw := range cidrs {
+			if raw == "203.0.113.10/32" {
+				relayRule = rule
+			}
+			if strings.HasSuffix(raw.(string), "/32") && rule["port"] == nil && raw != "203.0.113.10/32" {
+				resolverRule = rule
+			}
+		}
+	}
+	if relayRule == nil {
+		t.Fatal("no rule for the excluded relay address")
+	}
+	ports, _ := relayRule["port"].([]any)
+	if len(ports) != 1 || ports[0].(float64) != 58371 {
+		t.Fatalf("relay exclusion should be limited to port 58371, got %v", relayRule["port"])
+	}
+	if resolverRule == nil {
+		t.Fatal("DNS resolvers must be routed direct without a port restriction")
+	}
+	// The domain rule stays broad: the relay hostname is only used for the
+	// control channel.
+	found := false
+	for _, rule := range parsed.Route.Rules {
+		if suffix, ok := rule["domain_suffix"].([]any); ok {
+			for _, raw := range suffix {
+				if raw == "relay.example.com" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the relay hostname should still be excluded by domain")
+	}
 }

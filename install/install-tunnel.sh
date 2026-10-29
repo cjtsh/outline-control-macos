@@ -5,7 +5,7 @@
 # taking the default route away from the Mac needs root, and only a daemon
 # survives logout and reboot.
 #
-#   sudo ./install/install-tunnel.sh [--accept-terms] [--exclude-host NAME] [--exclude-cidr CIDR]
+#   sudo ./install/install-tunnel.sh [--accept-terms] [--exclude-host NAME] [--exclude-cidr CIDR] [--exclude-port PORT]
 #
 # Exclusions are the addresses that must keep working when the VPN is dead —
 # in practice the relay the phone talks to. Pass them once, they are baked into
@@ -64,6 +64,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --exclude-host) EXCLUDES+=(-exclude-host "$2"); shift 2 ;;
     --exclude-cidr) EXCLUDES+=(-exclude-cidr "$2"); shift 2 ;;
+    --exclude-port) EXCLUDES+=(-exclude-port "$2"); shift 2 ;;
     --accept-terms) ACCEPT_TERMS=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -163,6 +164,24 @@ for _ in $(seq 1 25); do
   sleep 0.4
 done
 
+
+# Register with Mac Remote: one JSON manifest telling its agent where the local
+# provider lives. The agent reads this directory; no code is loaded from it.
+MODULE_DIR="$HOME/Library/Application Support/MacOSRemoteControl/modules"
+mkdir -p "$MODULE_DIR"
+cat > "$MODULE_DIR/outline-control.json" <<MODULE
+{
+  "id": "outline-control",
+  "name": "Outline Control",
+  "kind": "http",
+  "endpoint": "http://127.0.0.1:9911",
+  "tokenFile": "$DATA_DIR/token",
+  "panel": "tunnel"
+}
+MODULE
+chmod 0644 "$MODULE_DIR/outline-control.json"
+chown "$TARGET_USER" "$MODULE_DIR" "$MODULE_DIR/outline-control.json"
+echo "==> registered with Mac Remote as the module \"outline-control\""
 echo
 echo "Installed. Full-device VPN mode:"
 echo "  app      /Applications/Outline Control.app"
@@ -171,8 +190,18 @@ echo "  engine   $SINGBOX"
 echo "  data     $DATA_DIR"
 echo
 echo "Excluded from the tunnel (these keep working with the VPN off):"
+if [ ${#EXCLUDES[@]} -gt 0 ]; then
+  case " ${EXCLUDES[*]} " in
+    *" -exclude-cidr "*) case " ${EXCLUDES[*]} " in
+        *" -exclude-port "*) ;;
+        *) echo "!! --exclude-cidr without --exclude-port takes every service on that" >&2
+           echo "   address out of the tunnel. If the relay shares a host with other" >&2
+           echo "   services (a dashboard, a vault), add --exclude-port <relay port>." >&2 ;;
+      esac ;;
+  esac
+fi
 if [ ${#EXCLUDES[@]} -eq 0 ]; then
-  echo "  (none — pass --exclude-host / --exclude-cidr to protect a relay)"
+  echo "  (none — pass --exclude-host / --exclude-cidr [--exclude-port] to protect a relay)"
 else
   for ((i = 0; i < ${#EXCLUDES[@]}; i += 2)); do
     echo "  ${EXCLUDES[i + 1]}"

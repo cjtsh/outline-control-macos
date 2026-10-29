@@ -30,6 +30,10 @@ type TunOptions struct {
 	ExcludeHosts []string
 	// ExcludeCIDRs are dialled directly as well.
 	ExcludeCIDRs []string
+	// ExcludePorts narrows ExcludeCIDRs to those destination ports. Without it
+	// a whole address is outside the tunnel, which breaks every other service
+	// hosted there — including the ones the VPN exists to reach.
+	ExcludePorts []int
 	// ExcludeDomains covers DNS for those hosts plus their subdomains.
 	ExcludeDomains []string
 	MTU            int
@@ -95,14 +99,16 @@ func tunConfig(srv Server, opt TunOptions) ([]byte, error) {
 
 	resolvers := systemResolvers()
 	localServers := make([]any, 0, len(resolvers))
-	directCIDRs := append([]string{}, opt.ExcludeCIDRs...)
+	// Resolver traffic stays out of the tunnel, always: routing DNS through the
+	// proxy to bootstrap the proxy is the classic chicken-and-egg.
+	resolverCIDRs := make([]string, 0, len(resolvers))
 	for _, ns := range resolvers {
 		localServers = append(localServers, map[string]any{
 			"tag":    "local-" + strings.ReplaceAll(ns, ":", "-"),
 			"type":   "udp",
 			"server": ns,
 		})
-		directCIDRs = append(directCIDRs, ns+"/32")
+		resolverCIDRs = append(resolverCIDRs, ns+"/32")
 	}
 
 	remote := map[string]any{
@@ -123,11 +129,18 @@ func tunConfig(srv Server, opt TunOptions) ([]byte, error) {
 	}
 
 	routeRules := []any{}
-	if len(directCIDRs) > 0 {
+	if len(resolverCIDRs) > 0 {
 		routeRules = append(routeRules, map[string]any{
-			"ip_cidr":  directCIDRs,
+			"ip_cidr":  resolverCIDRs,
 			"outbound": "direct",
 		})
+	}
+	if len(opt.ExcludeCIDRs) > 0 {
+		rule := map[string]any{"ip_cidr": opt.ExcludeCIDRs, "outbound": "direct"}
+		if len(opt.ExcludePorts) > 0 {
+			rule["port"] = opt.ExcludePorts
+		}
+		routeRules = append(routeRules, rule)
 	}
 	for _, d := range opt.ExcludeDomains {
 		routeRules = append(routeRules, map[string]any{

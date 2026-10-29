@@ -15,6 +15,7 @@ echo "  /Applications/Outline Control.app"
 echo "  $AGENT_PLIST  (socks mode)"
 echo "  $DAEMON_PLIST + $DAEMON_BIN  (tunnel mode, needs sudo)"
 echo "  $SUPPORT  (saved exits and their access keys)"
+echo "  the Mac Remote module registration (modules/outline-control.json)"
 printf 'Continue? [y/N] '
 read -r answer
 case "$answer" in
@@ -34,4 +35,5 @@ pkill -f "Contents/MacOS/OutlineControl" 2>/dev/null || true
 rm -f "$AGENT_PLIST"
 rm -rf "/Applications/Outline Control.app"
 rm -rf "$SUPPORT"
+rm -f "$HOME/Library/Application Support/MacOSRemoteControl/modules/outline-control.json"
 echo "removed."

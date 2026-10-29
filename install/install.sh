@@ -135,6 +135,24 @@ else
   echo "!! provider did not answer yet — check $SUPPORT/provider.log"
 fi
 
+
+# Register with Mac Remote: one JSON manifest telling its agent where the local
+# provider lives. The agent reads this directory; no code is loaded from it.
+MODULE_DIR="$HOME/Library/Application Support/MacOSRemoteControl/modules"
+mkdir -p "$MODULE_DIR"
+cat > "$MODULE_DIR/outline-control.json" <<MODULE
+{
+  "id": "outline-control",
+  "name": "Outline Control",
+  "kind": "http",
+  "endpoint": "http://127.0.0.1:9911",
+  "tokenFile": "$SUPPORT/token",
+  "panel": "tunnel"
+}
+MODULE
+chmod 0644 "$MODULE_DIR/outline-control.json"
+
+echo "==> registered with Mac Remote as the module \"outline-control\""
 echo
 echo "Installed. Open \"/Applications/Outline Control.app\" to add an exit."
 echo "The provider starts at login and is restartable with:"

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -34,6 +35,14 @@ func main() {
 	})
 	flag.Func("exclude-cidr", "CIDR dialled directly (repeatable)", func(v string) error {
 		tunOpts.ExcludeCIDRs = append(tunOpts.ExcludeCIDRs, v)
+		return nil
+	})
+	flag.Func("exclude-port", "limit the excluded CIDRs to these destination ports (repeatable)", func(v string) error {
+		port, err := strconv.Atoi(v)
+		if err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("invalid port %q", v)
+		}
+		tunOpts.ExcludePorts = append(tunOpts.ExcludePorts, port)
 		return nil
 	})
 	flag.Func("exclude-domain", "domain suffix resolved and dialled directly (repeatable)", func(v string) error {
@@ -227,4 +236,4 @@ func trimSpace(s string) string {
 	return s
 }
 
-const version = "0.1.0"
+const version = "0.1.1"
