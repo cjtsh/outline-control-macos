@@ -2,6 +2,7 @@
 
 [![Disclaimer](https://img.shields.io/badge/Legal-Standard_Disclaimer-critical.svg)](https://github.com/cjtsh/software-disclaimer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/cjtsh/software-disclaimer/blob/main/LICENSE)
+[![Release](https://img.shields.io/badge/release-0.1.0-brightgreen.svg)](https://github.com/cjtsh/outline-control-macos/releases/tag/v0.1.0)
 
 A native macOS front end for [Outline](https://getoutline.org) that can be driven
 by an API instead of by clicking.
@@ -76,6 +77,10 @@ switched to another exit. Private address space is always routed directly as
 well.
 
 ## Install
+
+No build required: grab **`Outline-Control-0.1.0.zip`** from the
+[releases page](https://github.com/cjtsh/outline-control-macos/releases), which
+contains the app, the installers and `INSTALL.txt`. Or build it yourself:
 
 ```sh
 git clone https://github.com/cjtsh/outline-control-macos.git
