@@ -2,3 +2,4 @@ provider/provider
 app/build/
 *.icns
 .DS_Store
+dist/
