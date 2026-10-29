@@ -2,7 +2,7 @@
 
 [![Disclaimer](https://img.shields.io/badge/Legal-Standard_Disclaimer-critical.svg)](https://github.com/cjtsh/software-disclaimer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/cjtsh/software-disclaimer/blob/main/LICENSE)
-[![Release](https://img.shields.io/badge/release-0.1.2-brightgreen.svg)](https://github.com/cjtsh/outline-control-macos/releases/tag/v0.1.2)
+[![Release](https://img.shields.io/badge/release-0.1.3-brightgreen.svg)](https://github.com/cjtsh/outline-control-macos/releases/tag/v0.1.3)
 
 A native macOS front end for [Outline](https://getoutline.org) that can be driven
 by an API instead of by clicking.
@@ -78,7 +78,7 @@ well.
 
 ## Install
 
-No build required: grab **`Outline-Control-0.1.2.zip`** from the
+No build required: grab **`Outline-Control-0.1.3.zip`** from the
 [releases page](https://github.com/cjtsh/outline-control-macos/releases), which
 contains the app, the installers and `INSTALL.txt`. Or build it yourself:
 
@@ -110,6 +110,9 @@ Uninstall: `./install/uninstall.sh`.
   name comes from the key's `#fragment` and can be changed later.
 * **CONNECT / DISCONNECT** — one tunnel at a time, like the original client.
 * **⋯ → Rename / Forget** — relabel an exit, or delete it from this Mac.
+* **Drag the grip** (the six dots at the left of a card) to reorder the list. The
+  order is stored by the provider, so it survives a restart and is the same list
+  the phone sees.
 * The footer shows the SOCKS address while connected and the client binary in use.
 
 Exits are checked every few seconds with a TCP probe, so a dead server shows as
@@ -141,6 +144,7 @@ Everything the app does is available on `http://127.0.0.1:9911`:
 | `POST` | `/servers` | `{"key":"ss://…","name":"optional"}` |
 | `PATCH` | `/servers/{id}` | `{"name":"Tokyo"}` |
 | `DELETE` | `/servers/{id}` | forget an exit (stops the tunnel if it is live) |
+| `POST` | `/servers/order` | `{"ids":[…]}` — the card order, every id exactly once |
 | `POST` | `/connect` | `{"id":"…"}` |
 | `POST` | `/disconnect` | stop the tunnel |
 | `GET` | `/health` | last TCP probe per exit |

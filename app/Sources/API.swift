@@ -248,6 +248,19 @@ final class OutlineAPI {
         decode("PATCH", "/servers/\(id)", body: ["name": name], as: ServerView.self, completion: completion)
     }
 
+    /// Stores the card order. The provider refuses anything that is not a
+    /// complete permutation, so a stale list cannot scramble the order.
+    func reorder(ids: [String], _ completion: @escaping (Result<Void, APIError>) -> Void) {
+        send("POST", "/servers/order", body: ["ids": ids]) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success: completion(.success(()))
+                case .failure(let message): completion(.failure(message))
+                }
+            }
+        }
+    }
+
     func forget(_ id: String, _ completion: @escaping (Result<Void, APIError>) -> Void) {
         send("DELETE", "/servers/\(id)", body: nil) { result in
             DispatchQueue.main.async {

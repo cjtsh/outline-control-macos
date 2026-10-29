@@ -20,7 +20,7 @@ for arch in arm64 x86_64; do
   swiftc -O -target "$arch-apple-macos13.0" \
     -module-cache-path "$MODCACHE" \
     -o "build/OutlineControl-$arch" \
-    Sources/main.swift Sources/API.swift Sources/Views.swift Sources/Legal.swift
+    Sources/main.swift Sources/API.swift Sources/Views.swift Sources/Legal.swift Sources/Drag.swift
 done
 lipo -create -output build/OutlineControl build/OutlineControl-arm64 build/OutlineControl-x86_64 >/dev/null
 rm -f build/OutlineControl-arm64 build/OutlineControl-x86_64

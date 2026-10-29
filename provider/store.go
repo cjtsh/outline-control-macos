@@ -24,6 +24,9 @@ type Server struct {
 	Host     string    `json:"host"`
 	Port     string    `json:"port"`
 	Added    time.Time `json:"added"`
+	// Position is the card order in the app. 1 is the top card. Exits saved by
+	// older versions have no position and are numbered by their Added time.
+	Position int `json:"position,omitempty"`
 }
 
 // ServerView is the public shape of a server.
@@ -75,7 +78,21 @@ func NewStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("cannot read %s: %w", path, err)
 	}
 	st.servers = f.Servers
-	sort.SliceStable(st.servers, func(i, j int) bool { return st.servers[i].Added.Before(st.servers[j].Added) })
+	legacy := false
+	for _, s := range st.servers {
+		if s.Position <= 0 {
+			legacy = true
+			break
+		}
+	}
+	if legacy {
+		sort.SliceStable(st.servers, func(i, j int) bool { return st.servers[i].Added.Before(st.servers[j].Added) })
+		for i := range st.servers {
+			st.servers[i].Position = i + 1
+		}
+	} else {
+		sort.SliceStable(st.servers, func(i, j int) bool { return st.servers[i].Position < st.servers[j].Position })
+	}
 	return st, nil
 }
 
@@ -121,6 +138,7 @@ func (st *Store) Add(key AccessKey, name string) (Server, error) {
 		Host:     key.Host,
 		Port:     key.Port,
 		Added:    time.Now().UTC(),
+		Position: st.nextPosition(),
 	}
 	st.servers = append(st.servers, srv)
 	if err := st.save(); err != nil {
@@ -150,6 +168,59 @@ func (st *Store) Rename(id, name string) (Server, error) {
 		return st.servers[i], nil
 	}
 	return Server{}, ErrNoSuchServer
+}
+
+// nextPosition returns one past the highest position. Callers hold the lock.
+func (st *Store) nextPosition() int {
+	highest := 0
+	for _, s := range st.servers {
+		if s.Position > highest {
+			highest = s.Position
+		}
+	}
+	return highest + 1
+}
+
+// Reorder rewrites the card order. ids must name every saved exit exactly once;
+// anything else is refused rather than silently ignored, because a partial list
+// would produce an order nobody asked for.
+func (st *Store) Reorder(ids []string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if len(ids) != len(st.servers) {
+		return fmt.Errorf("expected %d ids, got %d", len(st.servers), len(ids))
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			return fmt.Errorf("duplicate id %q", id)
+		}
+		seen[id] = true
+	}
+	for _, s := range st.servers {
+		if !seen[s.ID] {
+			return fmt.Errorf("missing id %q", s.ID)
+		}
+	}
+
+	byID := make(map[string]Server, len(st.servers))
+	for _, s := range st.servers {
+		byID[s.ID] = s
+	}
+	backup := append([]Server(nil), st.servers...)
+	next := make([]Server, 0, len(ids))
+	for i, id := range ids {
+		s := byID[id]
+		s.Position = i + 1
+		next = append(next, s)
+	}
+	st.servers = next
+	if err := st.save(); err != nil {
+		st.servers = backup
+		return err
+	}
+	return nil
 }
 
 func (st *Store) Delete(id string) error {

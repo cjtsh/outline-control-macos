@@ -267,6 +267,7 @@ final class MainWindowController: NSWindowController {
                         isDefault: settings.defaultServer == server.id,
                         serviceOn: !settings.suspended)
             card.onPrimary = { [weak self] in self?.toggle(server) }
+            card.onDrop = { [weak self] dragged in self?.move(dragged, onto: server.id) }
             card.onRename = { [weak self] in self?.rename(server) }
             card.onForget = { [weak self] in self?.forget(server) }
             card.onMakeDefault = { [weak self] in self?.setDefault(server.id) }
@@ -400,6 +401,26 @@ final class MainWindowController: NSWindowController {
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name != server.name else { return }
         api?.rename(server.id, to: name) { result in
+            if case .failure(let message) = result { self.presentError(message.text) }
+            self.refresh()
+        }
+    }
+
+    /// Drops the dragged card where the target card sits. The list is reordered
+    /// locally first so the card lands instantly, then the provider stores it;
+    /// if storing fails the window reloads from the provider's truth.
+    private func move(_ draggedID: String, onto targetID: String) {
+        guard draggedID != targetID,
+              let from = servers.firstIndex(where: { $0.id == draggedID }),
+              let to = servers.firstIndex(where: { $0.id == targetID }) else { return }
+
+        var next = servers
+        let card = next.remove(at: from)
+        next.insert(card, at: to)
+        servers = next
+        rebuild()
+
+        api?.reorder(ids: next.map(\.id)) { result in
             if case .failure(let message) = result { self.presentError(message.text) }
             self.refresh()
         }

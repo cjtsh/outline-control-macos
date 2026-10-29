@@ -37,6 +37,7 @@ func (a *API) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /servers", a.auth(a.handleServers))
 	mux.HandleFunc("POST /servers", a.auth(a.handleAdd))
 	mux.HandleFunc("PATCH /servers/{id}", a.auth(a.handleRename))
+	mux.HandleFunc("POST /servers/order", a.auth(a.handleReorder))
 	mux.HandleFunc("DELETE /servers/{id}", a.auth(a.handleDelete))
 	mux.HandleFunc("POST /connect", a.auth(a.handleConnect))
 	mux.HandleFunc("POST /disconnect", a.auth(a.handleDisconnect))
@@ -244,6 +245,31 @@ func (a *API) handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	a.health.Probe(srv)
 	writeJSON(w, http.StatusCreated, srv.View())
+}
+
+// handleReorder stores the card order. The body names every exit exactly once.
+func (a *API) handleReorder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
+	if err != nil {
+		http.Error(w, "cannot read the request", http.StatusBadRequest)
+		return
+	}
+	if int64(len(raw)) > maxBody {
+		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		http.Error(w, "the order must be {\"ids\":[…]}", http.StatusBadRequest)
+		return
+	}
+	if err := a.store.Reorder(req.IDs); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) handleRename(w http.ResponseWriter, r *http.Request) {

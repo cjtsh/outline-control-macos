@@ -267,8 +267,10 @@ final class CardView: NSView {
     private let more = ActionButton(title: "⋯", style: .quiet)
     private let defaultTag = label("DEFAULT", size: 9, weight: .semibold, color: Palette.accent)
     private let rows = NSStackView()
+    private let handle = DragHandle()
 
     var onPrimary: (() -> Void)?
+    var onDrop: ((String) -> Void)?
     var onRename: (() -> Void)?
     var onForget: (() -> Void)?
     var onMakeDefault: (() -> Void)?
@@ -276,6 +278,7 @@ final class CardView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
 
+        registerForDraggedTypes([.outlineCard])
         wantsLayer = true
         layer?.cornerRadius = 12
         layer?.backgroundColor = Palette.card.cgColor
@@ -285,7 +288,13 @@ final class CardView: NSView {
         primary.onClick = { [weak self] in self?.onPrimary?() }
         more.onClick = { [weak self] in self?.showMenu() }
 
-        let top = NSStackView(views: [dot, nameLabel, spacer(), stateLabel])
+        handle.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            handle.widthAnchor.constraint(equalToConstant: 16),
+            handle.heightAnchor.constraint(equalToConstant: 22),
+        ])
+
+        let top = NSStackView(views: [handle, dot, nameLabel, spacer(), stateLabel])
         top.orientation = .horizontal
         top.spacing = 8
         top.alignment = .centerY
@@ -326,12 +335,42 @@ final class CardView: NSView {
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: more)
     }
 
+    // MARK: - Card reordering
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard canAccept(sender) else { return [] }
+        layer?.borderColor = Palette.accent.cgColor
+        layer?.borderWidth = 2
+        return .move
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        layer?.borderColor = Palette.cardEdge.cgColor
+        layer?.borderWidth = 1
+    }
+
+    private func canAccept(_ sender: NSDraggingInfo) -> Bool {
+        guard let dragged = sender.draggingPasteboard.string(forType: .outlineCard) else { return false }
+        return !dragged.isEmpty && dragged != handle.serverID
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        draggingExited(sender)
+        guard canAccept(sender),
+              let dragged = sender.draggingPasteboard.string(forType: .outlineCard) else {
+            return false
+        }
+        onDrop?(dragged)
+        return true
+    }
+
     @objc private func renameTapped() { onRename?() }
     @objc private func makeDefaultTapped() { onMakeDefault?() }
     @objc private func forgetTapped() { onForget?() }
 
     func update(server: ServerView, status: TunnelStatus, health: HealthView?,
                 isDefault: Bool, serviceOn: Bool) {
+        handle.serverID = server.id
         nameLabel.stringValue = server.name
         addressLabel.stringValue = server.address
         defaultTag.isHidden = !isDefault

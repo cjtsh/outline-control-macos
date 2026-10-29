@@ -128,3 +128,77 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestReorderPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "servers.json")
+	st, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	var ids []string
+	for _, key := range []string{
+		"ss://YWVzLTI1Ni1nY206c2VjcmV0@198.51.100.11:8388#One",
+		"ss://YWVzLTI1Ni1nY206c2VjcmV0@198.51.100.12:8388#Two",
+		"ss://YWVzLTI1Ni1nY206c2VjcmV0@198.51.100.13:8388#Three",
+	} {
+		parsed, err := ParseAccessKey(key)
+		if err != nil {
+			t.Fatalf("parse %s: %v", key, err)
+		}
+		srv, err := st.Add(parsed, "")
+		if err != nil {
+			t.Fatalf("add: %v", err)
+		}
+		ids = append(ids, srv.ID)
+	}
+
+	if err := st.Reorder([]string{ids[2], ids[0], ids[1]}); err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+	reopened, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	got := []string{}
+	for _, s := range reopened.List() {
+		got = append(got, s.ID)
+	}
+	want := []string{ids[2], ids[0], ids[1]}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order after reopen = %v, want %v", got, want)
+		}
+	}
+
+	if err := st.Reorder([]string{ids[0]}); err == nil {
+		t.Fatal("a partial list must be refused")
+	}
+	if err := st.Reorder([]string{ids[0], ids[1], "nope1234"}); err == nil {
+		t.Fatal("an unknown id must be refused")
+	}
+	if err := st.Reorder([]string{ids[0], ids[0], ids[1]}); err == nil {
+		t.Fatal("a duplicate id must be refused")
+	}
+}
+
+func TestLegacyFileGetsPositions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "servers.json")
+	legacy := `{"version":1,"servers":[
+  {"id":"aaaa0001","name":"Later","method":"aes-256-gcm","password":"p","host":"198.51.100.20","port":"8388","added":"2026-01-02T00:00:00Z"},
+  {"id":"bbbb0002","name":"Earlier","method":"aes-256-gcm","password":"p","host":"198.51.100.21","port":"8388","added":"2026-01-01T00:00:00Z"}
+]}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	st, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	list := st.List()
+	if list[0].Name != "Earlier" || list[1].Name != "Later" {
+		t.Fatalf("legacy order not preserved: %s, %s", list[0].Name, list[1].Name)
+	}
+	if list[0].Position != 1 || list[1].Position != 2 {
+		t.Fatalf("positions not assigned: %+v", list)
+	}
+}
