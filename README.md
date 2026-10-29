@@ -87,6 +87,10 @@ sudo ./install/install-tunnel.sh                # full-device VPN (recommended)
 open "/Applications/Outline Control.app"
 ```
 
+Both installers print the disclaimer and wait for you to accept it (`ACCEPT`, or
+`--accept-terms` for unattended runs) before they touch `/Library`. The app shows
+the same notice on first launch and records the accepted terms version.
+
 The tunnel installer puts the provider in
 `/Library/Application Support/Outline Control/` and runs it as the root
 LaunchDaemon `sh.cjt.outline-control` (restarted on crash, started at boot), so
