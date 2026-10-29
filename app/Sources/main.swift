@@ -47,8 +47,8 @@ final class MainWindowController: NSWindowController {
             backing: .buffered,
             defer: false)
         window.title = "Outline Control"
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.titlebarSeparatorStyle = .none
         // The window moves by its title bar only. `isMovableByWindowBackground`
         // used to make every pixel a title bar, and that background-drag path is
         // the one that trails the pointer when it crosses displays; the real

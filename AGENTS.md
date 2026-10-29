@@ -106,3 +106,26 @@ sudo ./install/install-tunnel.sh --accept-terms --exclude-host <relay> ...
 * Do not force-push shared history, and never rewrite history that could still
   contain a secret without telling the owner — a leaked key must be rotated, not
   merely deleted.
+
+## Window dragging (do not regress)
+
+The main window must keep a **standard, opaque title bar**. Do not set
+`titlebarAppearsTransparent`, `titleVisibility = .hidden`, or
+`isMovableByWindowBackground` on it, and do not move the window by hand in
+response to mouse events.
+
+Measured with a synthetic drag (20 steps across the boundary between two
+3360×1890 pt displays, tracking the layer-0 window's origin):
+
+| configuration | worst deviation |
+| --- | --- |
+| standard title bar | 0 pt |
+| `titlebarAppearsTransparent` + `titleVisibility = .hidden` | 3110 pt |
+| `isMovableByWindowBackground = true` | window trailed the pointer |
+| hand-rolled `setFrameOrigin` loop | kept moving after the pointer left |
+
+With either flag set the window stops at the display edge (`origin.x = 18`) or
+jumps displays while the cursor keeps travelling, which is exactly the "cursor
+detaches from the window" bug users report. A dark title bar via
+`window.appearance = NSAppearance(named: .darkAqua)` is fine and is what the
+app ships with.
