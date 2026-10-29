@@ -236,4 +236,4 @@ func trimSpace(s string) string {
 	return s
 }
 
-const version = "0.1.4"
+const version = "0.1.6"
