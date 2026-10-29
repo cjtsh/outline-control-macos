@@ -31,7 +31,7 @@ func newTestAPI(t *testing.T) (*httptest.Server, *Tunnel) {
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
-	tunnel := NewTunnel("127.0.0.1:11080")
+	tunnel := NewTunnel("127.0.0.1:11080", ModeSocks, TunOptions{}, t.TempDir())
 	api := &API{store: store, tunnel: tunnel, token: testToken, health: NewHealth(time.Minute)}
 	ts := httptest.NewServer(api.Routes())
 	t.Cleanup(func() {

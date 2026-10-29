@@ -246,19 +246,26 @@ final class MainWindowController: NSWindowController {
             headerState.stringValue = "Connected to \(name)\(since)"
             headerState.textColor = Palette.green
             footerDot.color = Palette.green
-            footerText.stringValue = "SOCKS \(status.socks)" + (status.backend.map { backend in
-                "  ·  " + (backend as NSString).lastPathComponent
-            } ?? "")
+            if status.isFullTunnel {
+                footerText.stringValue = "FULL TUNNEL  ·  all traffic  ·  " +
+                    (status.backend.map { ($0 as NSString).lastPathComponent } ?? "sing-box")
+            } else {
+                footerText.stringValue = "SOCKS \(status.socks)" + (status.backend.map { backend in
+                    "  ·  " + (backend as NSString).lastPathComponent
+                } ?? "")
+            }
         } else if status.state == "error" {
             headerState.stringValue = status.lastError ?? "Tunnel failed"
             headerState.textColor = Palette.red
             footerDot.color = Palette.red
             footerText.stringValue = "no tunnel"
         } else {
-            headerState.stringValue = "Not connected — your normal network is in use"
+            headerState.stringValue = status.isFullTunnel
+                ? "Not connected — this Mac is using its normal network"
+                : "Not connected — your normal network is in use"
             headerState.textColor = Palette.secondary
             footerDot.color = Palette.tertiary
-            footerText.stringValue = "SOCKS \(status.socks)"
+            footerText.stringValue = status.isFullTunnel ? "FULL TUNNEL  ·  ready" : "SOCKS \(status.socks)"
         }
         countLabel.stringValue = servers.count == 1 ? "1 exit" : "\(servers.count) exits"
     }

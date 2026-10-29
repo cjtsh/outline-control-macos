@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,8 @@ type TunnelStatus struct {
 	ServerName string     `json:"serverName,omitempty"`
 	Since      *time.Time `json:"since,omitempty"`
 	LastError  string     `json:"lastError,omitempty"`
-	Socks      string     `json:"socks"`
+	Mode       Mode       `json:"mode"`
+	Socks      string     `json:"socks,omitempty"`
 	PID        int        `json:"pid,omitempty"`
 	Backend    string     `json:"backend,omitempty"`
 }
@@ -28,6 +30,10 @@ type TunnelStatus struct {
 // we own is its lifecycle.
 type Tunnel struct {
 	mu       sync.RWMutex
+	mode     Mode
+	tun      TunOptions
+	dataDir  string
+	singbox  string
 	socks    string
 	state    string
 	serverID string
@@ -42,8 +48,15 @@ type Tunnel struct {
 var ErrNoBackend = errors.New("no shadowsocks client found (install one: brew install shadowsocks-rust)")
 
 // NewTunnel resolves the client binary once at startup.
-func NewTunnel(socks string) *Tunnel {
-	return &Tunnel{socks: socks, state: "disconnected", backend: findBackend()}
+func NewTunnel(socks string, mode Mode, opt TunOptions, dataDir string) *Tunnel {
+	t := &Tunnel{socks: socks, mode: mode, tun: opt, dataDir: dataDir, state: "disconnected"}
+	if mode == ModeTunnel {
+		t.singbox = findSingbox()
+		t.backend = t.singbox
+	} else {
+		t.backend = findBackend()
+	}
+	return t
 }
 
 // findBackend looks for sslocal in the usual places. The environment variable
@@ -78,6 +91,7 @@ func (t *Tunnel) Status() TunnelStatus {
 		ServerName: t.serverN,
 		Since:      t.since,
 		LastError:  t.lastErr,
+		Mode:       t.mode,
 		Socks:      t.socks,
 		Backend:    t.backend,
 	}
@@ -90,10 +104,23 @@ func (t *Tunnel) Status() TunnelStatus {
 // Connect stops whatever is running and starts the client for srv.
 func (t *Tunnel) Connect(srv Server) error {
 	if t.backend == "" {
+		if t.mode == ModeTunnel {
+			err := fmt.Errorf("no tunnel engine found (install one: brew install sing-box)")
+			t.setError(err.Error())
+			return err
+		}
 		t.setError(ErrNoBackend.Error())
 		return ErrNoBackend
 	}
+	if t.mode == ModeTunnel && os.Geteuid() != 0 {
+		t.setError(ErrNotRoot.Error())
+		return ErrNotRoot
+	}
 	t.Disconnect()
+
+	if t.mode == ModeTunnel {
+		return t.connectTun(srv)
+	}
 
 	args := []string{
 		"-b", t.socks,
@@ -128,8 +155,6 @@ func (t *Tunnel) Connect(srv Server) error {
 		t.setError(fmt.Sprintf("cannot start %s: %v", t.backend, err))
 		return err
 	}
-	go t.watch(cmd, gen, &stderr)
-
 	// Give the client a moment to fail loudly (bad cipher, refused port).
 	time.Sleep(400 * time.Millisecond)
 	t.mu.RLock()
@@ -147,7 +172,63 @@ func (t *Tunnel) Connect(srv Server) error {
 	}
 	t.mu.Unlock()
 
-	go t.watch(cmd, gen, &stderr)
+	return nil
+}
+
+// connectTun starts sing-box with a rendered configuration. The utun device and
+// the default route belong to it for as long as it runs.
+func (t *Tunnel) connectTun(srv Server) error {
+	raw, err := tunConfig(srv, t.tun)
+	if err != nil {
+		t.setError(err.Error())
+		return err
+	}
+	path := filepath.Join(t.dataDir, "singbox.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.setError(fmt.Sprintf("cannot write the tunnel config: %v", err))
+		return err
+	}
+
+	cmd := exec.Command(t.singbox, "run", "-c", path)
+	var output strings.Builder
+	cmd.Stderr = &output
+	cmd.Stdout = &output
+	cmd.Env = append(os.Environ(), "SING_BOX_LOG_LEVEL=warn")
+
+	t.mu.Lock()
+	t.gen++
+	gen := t.gen
+	t.state = "connecting"
+	t.serverID = srv.ID
+	t.serverN = srv.Name
+	t.since = nil
+	t.lastErr = ""
+	t.cmd = cmd
+	t.mu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		t.setError(fmt.Sprintf("cannot start %s: %v", t.singbox, err))
+		return err
+	}
+	go t.watch(cmd, gen, &output)
+
+	// sing-box needs a moment longer than sslocal: it creates the utun device
+	// and takes the default route before it is really up.
+	time.Sleep(1200 * time.Millisecond)
+	t.mu.RLock()
+	state, lastErr := t.state, t.lastErr
+	t.mu.RUnlock()
+	if state == "error" {
+		return fmt.Errorf("the tunnel did not start: %s", lastErr)
+	}
+
+	t.mu.Lock()
+	if t.gen == gen {
+		t.state = "connected"
+		now := time.Now().UTC()
+		t.since = &now
+	}
+	t.mu.Unlock()
 	return nil
 }
 
@@ -223,6 +304,12 @@ func cleanErr(s string) string {
 			return "the SOCKS port is already in use by another program"
 		case strings.Contains(l, "Connection refused"):
 			return "the exit refused the connection"
+		case strings.Contains(l, "operation not permitted"), strings.Contains(l, "permission denied"):
+			return "the tunnel engine needs root (run it from the privileged daemon)"
+		case strings.Contains(l, "empty direct outbound"):
+			return "the tunnel configuration was rejected"
+		case strings.Contains(l, "Address already in use"):
+			return "a previous tunnel still holds the device"
 		}
 		if len(l) > 300 {
 			l = l[:300] + "…"

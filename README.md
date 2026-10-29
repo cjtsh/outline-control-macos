@@ -19,7 +19,9 @@ So this project splits the job in two:
   Outline Control.app  ──HTTP (127.0.0.1:9911)──▶  outline-controld
    (Swift/AppKit, stateless)                        (Go, launchd, owns everything)
                                                           │
-                                                          └── supervises sslocal
+                                                          ├── tunnel mode: supervises sing-box
+                                                          │   (utun + default route + DNS)
+                                                          └── socks mode: supervises sslocal
                                                               (shadowsocks-rust)
 ```
 
@@ -36,22 +38,57 @@ what you want if the window is not the thing that matters.
 
 This project deliberately **does not implement the Shadowsocks cipher**. A
 proven binary owns the wire format; we own its lifecycle, its state machine and
-its API. [`sslocal`](https://github.com/shadowsocks/shadowsocks-rust) is started
-as a supervised child process and stopped when you disconnect.
+its API.
+
+## Two modes
+
+| | **tunnel** | **socks** |
+|---|---|---|
+| What it captures | every packet on the Mac | only apps pointed at a local SOCKS proxy |
+| Engine | [sing-box](https://sing-box.sagernet.org) (`utun`, default route, DNS through the exit) | [shadowsocks-rust](https://github.com/shadowsocks/shadowsocks-rust) |
+| Privileges | root LaunchDaemon | your login agent |
+| Install | `sudo ./install/install-tunnel.sh` | `./install/install.sh` |
+
+**Tunnel mode is the one that behaves like a VPN.** macOS will not hand out a
+`NEPacketTunnelProvider` without an Apple-granted entitlement, so instead of a
+Network Extension this mode does what every `utun`-based client does: a
+privileged daemon creates the tunnel interface, takes the default route and
+forwards packets through the exit. That is why it needs root — and why it
+survives logout and reboot.
+
+### Exclusions: the whole point
+
+A VPN you can only fix *through* the VPN is a trap. The tunnel therefore always
+keeps a list of destinations that bypass it:
+
+```sh
+sudo ./install/install-tunnel.sh \
+  --exclude-host relay.example.com \
+  --exclude-cidr 203.0.113.10/32
+```
+
+Excluded hosts resolve locally and dial directly, so the control channel that
+starts and stops this VPN keeps working while the VPN is down, wrong, or being
+switched to another exit. Private address space is always routed directly as
+well.
 
 ## Install
 
 ```sh
 git clone https://github.com/cjtsh/outline-control-macos.git
 cd outline-control-macos
-./app/build.sh            # builds the app, the provider and the icon
-./install/install.sh      # /Applications + LaunchAgent
+./app/build.sh                                  # app, provider, icon
+sudo ./install/install-tunnel.sh                # full-device VPN (recommended)
+# or, for the per-app SOCKS proxy:
+./install/install.sh
 open "/Applications/Outline Control.app"
 ```
 
-`install.sh` puts the provider in
-`~/Library/Application Support/Outline Control/` and keeps it running with the
-LaunchAgent `sh.cjt.outline-control` (restarted on crash, started at login).
+The tunnel installer puts the provider in
+`/Library/Application Support/Outline Control/` and runs it as the root
+LaunchDaemon `sh.cjt.outline-control` (restarted on crash, started at boot), so
+the VPN is available before anyone logs in. Your data stays in
+`~/Library/Application Support/Outline Control/`.
 
 Uninstall: `./install/uninstall.sh`.
 
@@ -99,10 +136,14 @@ curl -s -H "X-Outline-Token: $TOKEN" http://127.0.0.1:9911/status
   (`sslocal`, or `$OUTLINE_CONTROL_SSLOCAL`) with an argument list built from
   parsed key fields. The cipher is whitelisted; unsupported ones are refused at
   parse time.
-* Underneath, this is a **SOCKS5 proxy**, not a system-wide VPN. Apps must point
-  at the SOCKS address shown in the footer (default `127.0.0.1:11080`). If that
-  port is busy the provider takes the next free one and reports it in `/status`,
-  so a stale client can never wedge the feature.
+* In tunnel mode the daemon runs as root, because taking the default route
+  requires it. It never accepts a command to run: the only two binaries it can
+  spawn are a fixed `sing-box run -c <config it wrote itself>` and, in socks
+  mode, `sslocal` with flags derived from parsed key fields.
+* The tunnel is IPv4-only. IPv6 traffic is neither captured nor forwarded.
+* Tunnel mode is as strong as your exit: if the exit dies, traffic stops rather
+  than falling back to the open network (no silent leak), but there is no `pf`
+  kill-switch either.
 
 ## Development
 
@@ -119,9 +160,10 @@ SwiftUI macro plugins, no package manager.
 
 * **Module for Mac Remote** — let the phone start, stop and switch exits through
   the same relay that already reaches this Mac.
-* **System-wide tunnel** — a `NETransparentProxy` or `utun` helper so traffic is
-  captured without per-app proxy settings. That needs a root helper and an
-  Apple-granted entitlement, which is a different project.
+* **Network Extension variant** — a `NEPacketTunnelProvider` build for anyone
+  with an Apple entitlement: no root, system VPN UI, on-demand rules.
+* **Kill switch** — optional `pf` rules so a crash of the tunnel engine cannot
+  leak a single packet.
 
 ## License
 

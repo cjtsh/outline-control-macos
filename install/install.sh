@@ -32,6 +32,12 @@ EOF
   exit 1
 fi
 
+if [ -f /Library/LaunchDaemons/sh.cjt.outline-control.plist ]; then
+  echo "The tunnel daemon is installed and owns port 9911." >&2
+  echo "Run ./install/uninstall.sh first if you want the SOCKS mode instead." >&2
+  exit 1
+fi
+
 echo "==> installing provider to $SUPPORT"
 mkdir -p "$SUPPORT"
 chmod 700 "$SUPPORT"

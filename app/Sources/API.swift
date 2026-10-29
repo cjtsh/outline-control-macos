@@ -24,12 +24,18 @@ struct TunnelStatus: Decodable, Equatable {
     let serverName: String?
     let since: String?
     let lastError: String?
+    let mode: String?
     let socks: String
     let backend: String?
     let pid: Int?
 
     static let empty = TunnelStatus(state: "disconnected", serverId: nil, serverName: nil,
-                                    since: nil, lastError: nil, socks: "", backend: nil, pid: nil)
+                                    since: nil, lastError: nil, mode: "socks", socks: "",
+                                    backend: nil, pid: nil)
+
+    /// "tunnel" means every packet on this Mac takes the exit; "socks" means
+    /// only apps pointed at the local proxy do.
+    var isFullTunnel: Bool { mode == "tunnel" }
 
     var isConnected: Bool { state == "connected" }
 

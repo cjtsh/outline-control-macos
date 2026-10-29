@@ -8,8 +8,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -19,8 +21,27 @@ func main() {
 		listen = flag.String("listen", "127.0.0.1:9911", "address for the local control API")
 		socks  = flag.String("socks", "127.0.0.1:11080", "loopback SOCKS5 address exposed while connected")
 		data   = flag.String("data", defaultDataDir(), "directory for servers.json and token")
+		mode   = flag.String("mode", string(ModeSocks), "how traffic reaches the exit: socks (local proxy) or tunnel (full-device VPN)")
+		mtu    = flag.Int("mtu", 1500, "utun MTU for tunnel mode")
+
+		owner   = flag.String("token-owner", "", "give the token file to this user (for tunnel mode, where the daemon runs as root)")
+		tunOpts = TunOptions{}
 	)
+	flag.Func("exclude-host", "host dialled directly, never through the exit (repeatable)", func(v string) error {
+		tunOpts.ExcludeHosts = append(tunOpts.ExcludeHosts, v)
+		tunOpts.ExcludeDomains = append(tunOpts.ExcludeDomains, v)
+		return nil
+	})
+	flag.Func("exclude-cidr", "CIDR dialled directly (repeatable)", func(v string) error {
+		tunOpts.ExcludeCIDRs = append(tunOpts.ExcludeCIDRs, v)
+		return nil
+	})
+	flag.Func("exclude-domain", "domain suffix resolved and dialled directly (repeatable)", func(v string) error {
+		tunOpts.ExcludeDomains = append(tunOpts.ExcludeDomains, v)
+		return nil
+	})
 	flag.Parse()
+	tunOpts.MTU = *mtu
 
 	if err := os.MkdirAll(*data, 0o700); err != nil {
 		log.Fatalf("cannot create %s: %v", *data, err)
@@ -33,7 +54,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
-	tunnel := NewTunnel(*socks)
+	if err := chownToken(*owner, filepath.Join(*data, "token")); err != nil {
+		log.Printf("could not hand the token to %q: %v", *owner, err)
+	}
+	tunnel := NewTunnel(*socks, Mode(*mode), tunOpts, *data)
 	health := NewHealth(25 * time.Second)
 	health.StartRefresh(30*time.Second, store.List)
 
@@ -53,10 +77,14 @@ func main() {
 	}
 	backend := tunnel.backend
 	if backend == "" {
-		backend = "(missing — install shadowsocks-rust)"
+		if tunnel.mode == ModeTunnel {
+			backend = "(missing — install sing-box)"
+		} else {
+			backend = "(missing — install shadowsocks-rust)"
+		}
 	}
-	log.Printf("outline-control %s listening on http://%s (socks %s, client %s)",
-		version, ln.Addr(), *socks, backend)
+	log.Printf("outline-control %s listening on http://%s (mode %s, engine %s)",
+		version, ln.Addr(), tunnel.mode, backend)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -71,6 +99,36 @@ func main() {
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server: %v", err)
 	}
+}
+
+type userIDs struct {
+	uid int
+	gid int
+}
+
+// userLookup resolves a user name or numeric id without cgo (os/user works fine
+// here, but finding the owner by name keeps the flag readable).
+func userLookup(name string) (userIDs, error) {
+	if n, err := strconv.Atoi(name); err == nil {
+		return userIDs{uid: n, gid: n}, nil
+	}
+	out, err := exec.Command("/usr/bin/id", "-u", name).Output()
+	if err != nil {
+		return userIDs{}, err
+	}
+	uid, err := strconv.Atoi(trimSpace(string(out)))
+	if err != nil {
+		return userIDs{}, err
+	}
+	gidOut, err := exec.Command("/usr/bin/id", "-g", name).Output()
+	if err != nil {
+		return userIDs{}, err
+	}
+	gid, err := strconv.Atoi(trimSpace(string(gidOut)))
+	if err != nil {
+		return userIDs{}, err
+	}
+	return userIDs{uid: uid, gid: gid}, nil
 }
 
 func defaultDataDir() string {
@@ -99,6 +157,19 @@ func ensureToken(path string) (string, error) {
 		return "", err
 	}
 	return token, nil
+}
+
+// chownToken hands the API token to the desktop user when the daemon runs as
+// root, so the GUI can still read it without running as root itself.
+func chownToken(user, path string) error {
+	if user == "" {
+		return nil
+	}
+	u, err := userLookup(user)
+	if err != nil {
+		return err
+	}
+	return os.Chown(path, u.uid, u.gid)
 }
 
 func trimSpace(s string) string {
