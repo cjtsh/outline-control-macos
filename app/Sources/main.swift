@@ -5,6 +5,20 @@ final class FlippedDocument: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// The header strip is the window's handle. A plain NSView does not consume
+/// mouse events, so without this the only way to move the window is its title
+/// bar — and with `isMovableByWindowBackground` the whole card list became a
+/// window handle, which is what made dragging feel detached from the pointer.
+final class WindowDragArea: NSView {
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            window?.zoom(nil)
+            return
+        }
+        window?.performDrag(with: event)
+    }
+}
+
 final class MainWindowController: NSWindowController {
     private var api: OutlineAPI?
     private var servers: [ServerView] = []
@@ -35,7 +49,11 @@ final class MainWindowController: NSWindowController {
         window.title = "Outline Control"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
+        // Dragging the window is handled by WindowDragArea on the header.
+        // isMovableByWindowBackground would make every pixel of the card
+        // area drag the window, which fights card drags and makes the
+        // window lag behind the pointer across displays.
+        window.isMovableByWindowBackground = false
         window.minSize = NSSize(width: 480, height: 420)
         window.backgroundColor = Palette.window
         window.center()
@@ -113,20 +131,28 @@ final class MainWindowController: NSWindowController {
         panel.onBootToggle = { [weak self] in self?.setAutoconnect($0) }
         panel.onDefaultChange = { [weak self] in self?.setDefault($0) }
 
-        root.addSubview(headerRow)
-        root.addSubview(headerState)
+        let dragArea = WindowDragArea()
+        dragArea.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(dragArea)
+        dragArea.addSubview(headerRow)
+        dragArea.addSubview(headerState)
         root.addSubview(scroll)
         root.addSubview(panel)
         root.addSubview(footer)
 
         NSLayoutConstraint.activate([
-            headerRow.topAnchor.constraint(equalTo: root.topAnchor, constant: 34),
-            headerRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
-            headerRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
+            dragArea.topAnchor.constraint(equalTo: root.topAnchor),
+            dragArea.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            dragArea.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            dragArea.bottomAnchor.constraint(equalTo: headerState.bottomAnchor, constant: 10),
+
+            headerRow.topAnchor.constraint(equalTo: dragArea.topAnchor, constant: 34),
+            headerRow.leadingAnchor.constraint(equalTo: dragArea.leadingAnchor, constant: 24),
+            headerRow.trailingAnchor.constraint(equalTo: dragArea.trailingAnchor, constant: -24),
 
             headerState.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 6),
-            headerState.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
-            headerState.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
+            headerState.leadingAnchor.constraint(equalTo: dragArea.leadingAnchor, constant: 24),
+            headerState.trailingAnchor.constraint(equalTo: dragArea.trailingAnchor, constant: -24),
 
             scroll.topAnchor.constraint(equalTo: headerState.bottomAnchor, constant: 16),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
@@ -416,7 +442,10 @@ final class MainWindowController: NSWindowController {
 
         var next = servers
         let card = next.remove(at: from)
-        next.insert(card, at: to)
+        // Drop on a card means "take that card's slot": the target shifts down.
+        // Without the adjustment the card would land *after* the target, because
+        // removing the dragged card already moved everything below it up one.
+        next.insert(card, at: from < to ? to - 1 : to)
         servers = next
         rebuild()
 

@@ -258,7 +258,7 @@ final class ServicePanel: NSView {
 
 // MARK: - Cards
 
-final class CardView: NSView {
+final class CardView: NSView, NSDraggingSource {
     private let dot = DotView()
     private let nameLabel = label("", size: 15, weight: .semibold)
     private let addressLabel = monoLabel("")
@@ -279,6 +279,7 @@ final class CardView: NSView {
         super.init(frame: frame)
 
         registerForDraggedTypes([.outlineCard])
+        handle.onBeginDrag = { [weak self] event in self?.beginDrag(event) }
         wantsLayer = true
         layer?.cornerRadius = 12
         layer?.backgroundColor = Palette.card.cgColor
@@ -336,6 +337,41 @@ final class CardView: NSView {
     }
 
     // MARK: - Card reordering
+
+    /// Starts a drag whose image is the whole card, placed where the card really
+    /// is on screen.
+    ///
+    /// The old version handed AppKit the handle's *local* bounds, which is not
+    /// what `NSDraggingItem.draggingFrame` expects — it takes screen
+    /// coordinates. The image therefore sat at a constant offset from the
+    /// pointer, which is the "cursor jumps away from the card" bug, and it got
+    /// worse when the drag crossed a display or a space.
+    private func beginDrag(_ event: NSEvent) {
+        guard let window, let item = makeDragItem() else { return }
+        alphaValue = 0.45
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+
+    private func makeDragItem() -> NSDraggingItem? {
+        guard let window else { return nil }
+        let pasteboard = NSPasteboardItem()
+        pasteboard.setString(handle.serverID, forType: .outlineCard)
+
+        let item = NSDraggingItem(pasteboardWriter: pasteboard)
+        let onScreen = window.convertToScreen(convert(bounds, to: nil))
+        item.setDraggingFrame(onScreen, contents: dragImage())
+        return item
+    }
+
+    func draggingSession(_ session: NSDraggingSession,
+                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .move
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint,
+                         operation: NSDragOperation) {
+        alphaValue = 1
+    }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard canAccept(sender) else { return [] }

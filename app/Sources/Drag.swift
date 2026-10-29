@@ -6,10 +6,11 @@ extension NSPasteboard.PasteboardType {
     static let outlineCard = NSPasteboard.PasteboardType("sh.cjt.outline.card")
 }
 
-/// The grip you grab. It only starts a drag once the pointer has moved a few
+/// The grip you grab. It only reports a drag once the pointer has moved a few
 /// points, so a click still does nothing and the card's buttons stay clickable.
 final class DragHandle: NSView {
     var serverID: String = ""
+    var onBeginDrag: ((NSEvent) -> Void)?
     private var start: NSPoint?
 
     override func viewDidMoveToSuperview() {
@@ -30,23 +31,7 @@ final class DragHandle: NSView {
         let now = event.locationInWindow
         guard abs(now.x - start.x) > 3 || abs(now.y - start.y) > 3 else { return }
         self.start = nil
-
-        let item = NSPasteboardItem()
-        item.setString(serverID, forType: .outlineCard)
-        let dragging = NSDraggingItem(pasteboardWriter: item)
-        dragging.setDraggingFrame(bounds.insetBy(dx: -6, dy: -6), contents: snapshot())
-        beginDraggingSession(with: [dragging], event: event, source: self)
-    }
-
-    private func snapshot() -> NSImage {
-        let size = NSSize(width: max(bounds.width, 22), height: max(bounds.height, 28))
-        let image = NSImage(size: size)
-        image.lockFocus()
-        Palette.card.setFill()
-        NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 6, yRadius: 6).fill()
-        draw(NSRect(origin: .zero, size: size))
-        image.unlockFocus()
-        return image
+        onBeginDrag?(event)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -62,9 +47,18 @@ final class DragHandle: NSView {
     }
 }
 
-extension DragHandle: NSDraggingSource {
-    func draggingSession(_ session: NSDraggingSession,
-                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        .move
+extension NSView {
+    /// A drag image of this view at the display's backing scale.
+    ///
+    /// `cacheDisplay` is used rather than `lockFocus` because the latter renders
+    /// at 1x and produces a blurry, wrongly sized image on a Retina screen.
+    func dragImage() -> NSImage {
+        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else {
+            return NSImage(size: bounds.size)
+        }
+        cacheDisplay(in: bounds, to: rep)
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(rep)
+        return image
     }
 }
