@@ -1,3 +1,19 @@
+## Identity
+
+- Every commit is authored **only** as `Bitseeker LLC <bitseeker@users.noreply.github.com>`.
+  Never commit under a personal name, a personal email address, or a GitHub handle.
+  `git config user.name` / `user.email` are set per-repository; check them before the
+  first commit in a fresh clone:
+
+  ```sh
+  git config user.name  "Bitseeker LLC"
+  git config user.email "bitseeker@users.noreply.github.com"
+  ```
+
+- Public text names Bitseeker LLC as publisher and maintainer. Do not add individual
+  names, personal domains or personal email addresses to README, LICENSE, notes,
+  release text, screenshots or code comments.
+
 # Instructions for agents and contributors
 
 This repository is the macOS front end for Outline: a Go provider that owns the

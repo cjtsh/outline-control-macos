@@ -1,5 +1,15 @@
+# build output
 provider/provider
 app/build/
-*.icns
-.DS_Store
 dist/
+*.icns
+
+# runtime state — never commit these
+token
+servers.json
+settings.json
+singbox.json
+*.log
+
+# macOS
+.DS_Store
