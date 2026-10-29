@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -242,38 +241,7 @@ func (st *Store) Delete(id string) error {
 }
 
 func (st *Store) save() error {
-	f := storeFile{Version: 1, Servers: st.servers}
-	raw, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return err
-	}
-	raw = append(raw, '\n')
-
-	dir := filepath.Dir(st.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".servers-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), st.path)
+	return writeAtomic(st.path, storeFile{Version: 1, Servers: st.servers})
 }
 
 func newID() string {

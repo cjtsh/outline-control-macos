@@ -108,7 +108,12 @@ func tunConfig(srv Server, opt TunOptions) ([]byte, error) {
 			"type":   "udp",
 			"server": ns,
 		})
-		resolverCIDRs = append(resolverCIDRs, ns+"/32")
+		// An IPv6 resolver needs its own prefix length; a /32 is not its route.
+		bits := 32
+		if ip := net.ParseIP(ns); ip != nil && ip.To4() == nil {
+			bits = 128
+		}
+		resolverCIDRs = append(resolverCIDRs, fmt.Sprintf("%s/%d", ns, bits))
 	}
 
 	remote := map[string]any{

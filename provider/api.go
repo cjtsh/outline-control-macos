@@ -427,9 +427,14 @@ func trimNetErr(s string) string {
 }
 
 func readJSON(r *http.Request, dst any) error {
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+	// Over-read by one byte so an oversized body is reported as too large
+	// rather than silently truncated into a JSON syntax error.
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
 		return err
+	}
+	if int64(len(raw)) > maxBody {
+		return errors.New("request body too large")
 	}
 	if len(raw) == 0 {
 		return errors.New("empty request body")
