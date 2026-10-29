@@ -57,6 +57,9 @@ final class MainWindowController: NSWindowController {
         window.isMovableByWindowBackground = false
         window.minSize = NSSize(width: 480, height: 420)
         window.backgroundColor = Palette.window
+        // The app keeps running with no windows, so the window must survive
+        // ⌘W and the Dock icon brings it back (see applicationShouldHandleReopen).
+        window.isReleasedWhenClosed = false
         window.center()
         bringOnScreen(window)
         self.init(window: window)
@@ -228,10 +231,14 @@ final class MainWindowController: NSWindowController {
     }
 
     private func signatureNow() -> String {
+        // Deliberately excludes the elapsed-time strings (connectedFor, service
+        // uptime): they change every poll, and a signature that moves with the
+        // clock rebuilds the whole card list every 1.5 s. `tick` keeps those
+        // labels fresh instead.
         var parts: [String] = []
         parts.append(providerUp ? "up" : "down:\(providerError)")
-        parts.append("\(status.state)|\(status.serverId ?? "-")|\(status.connectedFor ?? "-")|\(status.lastError ?? "-")")
-        parts.append("svc:\(settings.autoconnect)|\(settings.defaultServer ?? "-")|\(settings.suspended)|\(service?.pid ?? 0)|\(service?.uptime ?? "-")")
+        parts.append("\(status.state)|\(status.serverId ?? "-")|\(status.lastError ?? "-")")
+        parts.append("svc:\(settings.autoconnect)|\(settings.defaultServer ?? "-")|\(settings.suspended)|\(service?.pid ?? 0)")
         for server in servers {
             let h = health[server.id].map { $0.reachable ? "ok" : "bad" } ?? "?"
             parts.append("\(server.id)|\(server.name)|\(server.address)|\(h)")
@@ -241,9 +248,26 @@ final class MainWindowController: NSWindowController {
 
     private func rebuildIfNeeded() {
         let sig = signatureNow()
-        guard sig != signature else { return }
+        guard sig != signature else {
+            tick()
+            return
+        }
         signature = sig
         rebuild()
+    }
+
+    /// Refreshes only the labels that carry elapsed time — the header, the
+    /// daemon's uptime, the connected card's counter — without rebuilding the
+    /// card list.
+    private func tick() {
+        if status.isConnected, let name = status.serverName {
+            let since = status.connectedFor.map { " · \($0)" } ?? ""
+            headerState.stringValue = "Connected to \(name)\(since)"
+        }
+        panel.tick(settings: settings, service: service)
+        for view in stack.arrangedSubviews {
+            (view as? CardView)?.tick(status: status)
+        }
     }
 
     private func rebuild() {
@@ -498,6 +522,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Clicking the Dock icon or relaunching the bundle brings the window back
+    /// instead of leaving a headless app that only polls the daemon.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            controller?.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        return true
+    }
 
     @objc func showDisclaimer(_ sender: Any?) {
         if legalWindow == nil {
