@@ -32,7 +32,19 @@ func newTestAPI(t *testing.T) (*httptest.Server, *Tunnel) {
 		t.Fatalf("store: %v", err)
 	}
 	tunnel := NewTunnel("127.0.0.1:11080", ModeSocks, TunOptions{}, t.TempDir())
-	api := &API{store: store, tunnel: tunnel, token: testToken, health: NewHealth(time.Minute)}
+	settings, err := NewSettingsStore(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatalf("settings: %v", err)
+	}
+	api := &API{
+		store:    store,
+		tunnel:   tunnel,
+		token:    testToken,
+		health:   NewHealth(time.Minute),
+		settings: settings,
+		started:  time.Now().UTC(),
+		restart:  func() {},
+	}
 	ts := httptest.NewServer(api.Routes())
 	t.Cleanup(func() {
 		tunnel.Disconnect()

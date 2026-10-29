@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -17,10 +18,15 @@ import (
 // requires the bearer token from the data directory, so another local process
 // cannot drive the VPN without being able to read a 0600 file.
 type API struct {
-	store  *Store
-	tunnel *Tunnel
-	token  string
-	health *Health
+	store    *Store
+	tunnel   *Tunnel
+	token    string
+	health   *Health
+	settings *SettingsStore
+	started  time.Time
+	// restart ends the process so launchd can start it again; tests inject a
+	// no-op so the test binary survives.
+	restart func()
 }
 
 const maxBody = 8 << 10
@@ -35,6 +41,11 @@ func (a *API) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /connect", a.auth(a.handleConnect))
 	mux.HandleFunc("POST /disconnect", a.auth(a.handleDisconnect))
 	mux.HandleFunc("GET /health", a.auth(a.handleHealth))
+	mux.HandleFunc("GET /settings", a.auth(a.handleSettings))
+	mux.HandleFunc("PATCH /settings", a.auth(a.handlePatchSettings))
+	mux.HandleFunc("POST /service/suspend", a.auth(a.handleSuspend))
+	mux.HandleFunc("POST /service/resume", a.auth(a.handleResume))
+	mux.HandleFunc("POST /service/restart", a.auth(a.handleRestart))
 	return mux
 }
 
@@ -51,9 +62,150 @@ func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tunnel":  a.tunnel.Status(),
-		"servers": len(a.store.List()),
+		"tunnel":   a.tunnel.Status(),
+		"servers":  len(a.store.List()),
+		"settings": a.settings.Get(),
+		"service":  a.serviceView(),
 	})
+}
+
+// ServiceView describes the daemon itself, so the GUI can show what is running
+// and whether restarting it will actually bring it back.
+type ServiceView struct {
+	PID        int       `json:"pid"`
+	Version    string    `json:"version"`
+	Mode       string    `json:"mode"`
+	Engine     string    `json:"engine"`
+	Started    time.Time `json:"started"`
+	Supervised bool      `json:"supervised"`
+}
+
+func (a *API) serviceView() ServiceView {
+	return ServiceView{
+		PID:        os.Getpid(),
+		Version:    version,
+		Mode:       string(a.tunnel.mode),
+		Engine:     a.tunnel.backend,
+		Started:    a.started,
+		Supervised: os.Getppid() == 1,
+	}
+}
+
+func (a *API) handleSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"settings": a.settings.Get(),
+		"service":  a.serviceView(),
+	})
+}
+
+type settingsPatch struct {
+	Autoconnect   *bool   `json:"autoconnect"`
+	DefaultServer *string `json:"defaultServer"`
+	Suspended     *bool   `json:"suspended"`
+}
+
+func (a *API) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
+	var req settingsPatch
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	prev := a.settings.Get()
+	next := prev
+	if req.Autoconnect != nil {
+		next.Autoconnect = *req.Autoconnect
+	}
+	if req.DefaultServer != nil {
+		if *req.DefaultServer != "" {
+			if _, ok := a.store.Get(*req.DefaultServer); !ok {
+				writeError(w, http.StatusNotFound, ErrNoSuchServer.Error())
+				return
+			}
+		}
+		next.DefaultServer = *req.DefaultServer
+	}
+	if req.Suspended != nil {
+		next.Suspended = *req.Suspended
+	}
+	saved, err := a.settings.Set(next)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.applySettings(prev, saved)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"settings": saved,
+		"service":  a.serviceView(),
+	})
+}
+
+func (a *API) handleSuspend(w http.ResponseWriter, r *http.Request) {
+	a.setSuspended(true)
+	writeJSON(w, http.StatusOK, map[string]any{"settings": a.settings.Get(), "service": a.serviceView()})
+}
+
+func (a *API) handleResume(w http.ResponseWriter, r *http.Request) {
+	a.setSuspended(false)
+	writeJSON(w, http.StatusOK, map[string]any{"settings": a.settings.Get(), "service": a.serviceView()})
+}
+
+func (a *API) setSuspended(suspended bool) {
+	prev := a.settings.Get()
+	next := prev
+	next.Suspended = suspended
+	saved, err := a.settings.Set(next)
+	if err != nil {
+		log.Printf("save settings: %v", err)
+		return
+	}
+	a.applySettings(prev, saved)
+}
+
+// applySettings performs the side effects of a settings change: releasing the
+// tunnel when the service is switched off, and bringing it up when it is
+// switched on with a default exit.
+func (a *API) applySettings(prev, next Settings) {
+	switch {
+	case next.Suspended && !prev.Suspended:
+		a.tunnel.Disconnect()
+	case !next.Suspended && prev.Suspended:
+		a.connectDefault()
+	case next.Autoconnect && !prev.Autoconnect:
+		a.connectDefault()
+	}
+}
+
+// connectDefault brings the default exit up if one is configured, the service
+// is on, and nothing is connected already.
+func (a *API) connectDefault() {
+	if a.settings.Get().Suspended {
+		return
+	}
+	srv, ok := a.store.Get(a.settings.Get().DefaultServer)
+	if !ok {
+		return
+	}
+	if st := a.tunnel.Status(); st.State == "connected" || st.State == "connecting" {
+		return
+	}
+	if err := a.tunnel.Connect(srv); err != nil {
+		log.Printf("connect default exit: %v", err)
+	}
+}
+
+func (a *API) handleRestart(w http.ResponseWriter, r *http.Request) {
+	supervised := os.Getppid() == 1
+	writeJSON(w, http.StatusOK, map[string]any{"restarting": true, "supervised": supervised})
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		a.tunnel.Disconnect()
+		log.Print("restart requested through the API")
+		if a.restart != nil {
+			a.restart()
+			return
+		}
+		os.Exit(0)
+	}()
 }
 
 func (a *API) handleServers(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +271,13 @@ func (a *API) handleDelete(w http.ResponseWriter, r *http.Request) {
 	// Never leave a tunnel running against an exit that no longer exists.
 	if st := a.tunnel.Status(); st.ServerID == id {
 		a.tunnel.Disconnect()
+	}
+	if a.settings.Get().DefaultServer == id {
+		next := a.settings.Get()
+		next.DefaultServer = ""
+		if _, err := a.settings.Set(next); err != nil {
+			log.Printf("clear default exit: %v", err)
+		}
 	}
 	if err := a.store.Delete(id); errors.Is(err, ErrNoSuchServer) {
 		writeError(w, http.StatusNotFound, err.Error())

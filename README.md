@@ -103,6 +103,21 @@ Uninstall: `./install/uninstall.sh`.
 Exits are checked every few seconds with a TCP probe, so a dead server shows as
 **Unreachable** before you click it rather than after.
 
+### The service itself
+
+The bar at the bottom of the window is the daemon, not the app:
+
+| Control | What it does |
+|---|---|
+| **Start at boot** | Brings the **Boot exit** up by itself when the daemon starts — at login and after a reboot. |
+| **Boot exit** | Which saved exit `Start at boot` uses. `None` means never connect on its own. |
+| **Restart** | Restarts the daemon (it exits and launchd starts it again). |
+| **Stop service** | Releases the tunnel and refuses to auto-connect until you press **Start service**. The daemon stays resident so it can still start the VPN; it just stops doing it on its own. |
+
+The VPN is never held open against your wishes: `Stop service` disconnects
+first, then records the decision, so another VPN client is free to take over.
+Two presses bring it back (`Start service`), including the boot exit.
+
 ## The local API
 
 Everything the app does is available on `http://127.0.0.1:9911`:
@@ -117,6 +132,11 @@ Everything the app does is available on `http://127.0.0.1:9911`:
 | `POST` | `/connect` | `{"id":"…"}` |
 | `POST` | `/disconnect` | stop the tunnel |
 | `GET` | `/health` | last TCP probe per exit |
+| `GET` | `/settings` | `{autoconnect, defaultServer, suspended}` plus service info |
+| `PATCH` | `/settings` | any subset of `{"autoconnect":true,"defaultServer":"id","suspended":false}` |
+| `POST` | `/service/suspend` | release the tunnel and stop auto-connecting |
+| `POST` | `/service/resume` | clear the suspension (connects the boot exit if configured) |
+| `POST` | `/service/restart` | restart the daemon through launchd |
 
 Every request needs the token from
 `~/Library/Application Support/Outline Control/token`:

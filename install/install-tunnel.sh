@@ -93,7 +93,19 @@ chmod 0644 "$PLIST"
 echo "==> starting the daemon"
 pkill -f "$BIN_DIR/outline-controld" 2>/dev/null || true
 launchctl bootout "system/$LABEL" 2>/dev/null || true
-launchctl bootstrap system "$PLIST"
+# launchd can answer the first bootstrap with "5: Input/output error" while it
+# is still tearing the old job down, so retry instead of failing the install.
+for attempt in 1 2 3 4 5; do
+  if launchctl bootstrap system "$PLIST" 2>/dev/null; then
+    break
+  fi
+  if [ "$attempt" = 5 ]; then
+    echo "!! could not register the daemon with launchd" >&2
+    launchctl bootstrap system "$PLIST"
+    exit 1
+  fi
+  sleep 1
+done
 launchctl kickstart -k "system/$LABEL"
 
 for _ in $(seq 1 25); do

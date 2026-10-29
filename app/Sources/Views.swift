@@ -138,6 +138,124 @@ final class ActionButton: NSButton {
     }
 }
 
+// MARK: - Service panel
+
+/// The daemon's own controls: is it running, will it come back at boot, which
+/// exit should it use, and a way to restart or switch the whole thing off.
+final class ServicePanel: NSView {
+    private let dot = DotView()
+    private let title = label("Service", size: 12, weight: .semibold)
+    private let detail = monoLabel("", size: 10)
+    private let restart = ActionButton(title: "Restart", style: .quiet)
+    private let power = ActionButton(title: "Stop service", style: .quiet)
+
+    private let bootLabel = label("Start at boot", size: 11, color: Palette.secondary)
+    private let bootSwitch = NSSwitch()
+    private let defaultLabel = label("Boot exit", size: 11, color: Palette.secondary)
+    private let defaultPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+
+    var onRestart: (() -> Void)?
+    var onPower: (() -> Void)?
+    var onBootToggle: ((Bool) -> Void)?
+    var onDefaultChange: ((String?) -> Void)?
+    private var servers: [ServerView] = []
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.backgroundColor = Palette.card.cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = Palette.cardEdge.cgColor
+
+        bootSwitch.controlSize = .small
+        bootSwitch.target = self
+        bootSwitch.action = #selector(bootToggled)
+
+        defaultPicker.controlSize = .small
+        defaultPicker.font = .systemFont(ofSize: 11)
+        defaultPicker.target = self
+        defaultPicker.action = #selector(defaultPicked)
+        defaultPicker.isEnabled = true
+
+        restart.onClick = { [weak self] in self?.onRestart?() }
+        power.onClick = { [weak self] in self?.onPower?() }
+
+        let row1 = NSStackView(views: [dot, title, detail, spacer(), restart, power])
+        row1.orientation = .horizontal
+        row1.alignment = .centerY
+        row1.spacing = 8
+
+        let row2 = NSStackView(views: [bootLabel, bootSwitch, spacer(), defaultLabel, defaultPicker])
+        row2.orientation = .horizontal
+        row2.alignment = .centerY
+        row2.spacing = 8
+
+        let rows = NSStackView(views: [row1, row2])
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 10
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(rows)
+
+        NSLayoutConstraint.activate([
+            rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            rows.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            rows.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            row1.widthAnchor.constraint(equalTo: rows.widthAnchor),
+            row2.widthAnchor.constraint(equalTo: rows.widthAnchor),
+            defaultPicker.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func bootToggled() { onBootToggle?(bootSwitch.state == .on) }
+    @objc private func defaultPicked() {
+        let index = defaultPicker.indexOfSelectedItem
+        onDefaultChange?(index <= 0 ? nil : servers[index - 1].id)
+    }
+
+    func update(settings: Settings, service: ServiceInfo?, servers: [ServerView]) {
+        self.servers = servers
+        let suspended = settings.suspended
+
+        title.stringValue = suspended ? "Service stopped" : "Service running"
+        title.textColor = suspended ? Palette.secondary : Palette.text
+        dot.color = suspended ? Palette.tertiary : Palette.green
+
+        if suspended {
+            detail.stringValue = "VPN released · no auto-connect"
+        } else if let service {
+            let uptime = service.uptime.map { " · up \($0)" } ?? ""
+            detail.stringValue = "pid \(service.pid) · \(service.mode) · \(service.engineName)\(uptime)"
+        } else {
+            detail.stringValue = ""
+        }
+
+        power.styleTitle(suspended ? "Start service" : "Stop service")
+        restart.isEnabled = !suspended
+        bootSwitch.state = settings.autoconnect ? .on : .off
+        bootSwitch.isEnabled = true
+
+        let names = ["None"] + servers.map { $0.name }
+        if defaultPicker.itemTitles != names {
+            defaultPicker.removeAllItems()
+            defaultPicker.addItems(withTitles: names)
+        }
+        if let id = settings.defaultServer,
+           let index = servers.firstIndex(where: { $0.id == id }) {
+            defaultPicker.selectItem(at: index + 1)
+        } else {
+            defaultPicker.selectItem(at: 0)
+        }
+        defaultPicker.isEnabled = !servers.isEmpty
+        defaultLabel.textColor = defaultPicker.isEnabled ? Palette.secondary : Palette.tertiary
+        bootLabel.textColor = bootSwitch.isEnabled ? Palette.secondary : Palette.tertiary
+    }
+}
+
 // MARK: - Cards
 
 final class CardView: NSView {
@@ -147,11 +265,13 @@ final class CardView: NSView {
     private let stateLabel = label("", size: 11, weight: .medium, color: Palette.secondary)
     private let primary = ActionButton(title: "CONNECT", style: .filled)
     private let more = ActionButton(title: "⋯", style: .quiet)
+    private let defaultTag = label("DEFAULT", size: 9, weight: .semibold, color: Palette.accent)
     private let rows = NSStackView()
 
     var onPrimary: (() -> Void)?
     var onRename: (() -> Void)?
     var onForget: (() -> Void)?
+    var onMakeDefault: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -170,7 +290,7 @@ final class CardView: NSView {
         top.spacing = 8
         top.alignment = .centerY
 
-        let bottom = NSStackView(views: [addressLabel, spacer(), more, primary])
+        let bottom = NSStackView(views: [addressLabel, defaultTag, spacer(), more, primary])
         bottom.orientation = .horizontal
         bottom.spacing = 8
         bottom.alignment = .centerY
@@ -199,17 +319,22 @@ final class CardView: NSView {
         let menu = NSMenu()
         let rename = menu.addItem(withTitle: "Rename…", action: #selector(renameTapped), keyEquivalent: "")
         rename.target = self
+        let makeDefault = menu.addItem(withTitle: "Use at boot", action: #selector(makeDefaultTapped), keyEquivalent: "")
+        makeDefault.target = self
         let forget = menu.addItem(withTitle: "Forget", action: #selector(forgetTapped), keyEquivalent: "")
         forget.target = self
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: more)
     }
 
     @objc private func renameTapped() { onRename?() }
+    @objc private func makeDefaultTapped() { onMakeDefault?() }
     @objc private func forgetTapped() { onForget?() }
 
-    func update(server: ServerView, status: TunnelStatus, health: HealthView?) {
+    func update(server: ServerView, status: TunnelStatus, health: HealthView?,
+                isDefault: Bool, serviceOn: Bool) {
         nameLabel.stringValue = server.name
         addressLabel.stringValue = server.address
+        defaultTag.isHidden = !isDefault
 
         let mine = status.serverId == server.id
         if mine && status.isConnected {
@@ -251,7 +376,7 @@ final class CardView: NSView {
             }
             primary.setStyle(.filled)
             primary.styleTitle("CONNECT")
-            primary.isEnabled = status.state != "connecting"
+            primary.isEnabled = serviceOn && status.state != "connecting"
         }
     }
 }

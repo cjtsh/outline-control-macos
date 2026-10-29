@@ -57,11 +57,22 @@ func main() {
 	if err := chownToken(*owner, filepath.Join(*data, "token")); err != nil {
 		log.Printf("could not hand the token to %q: %v", *owner, err)
 	}
+	settings, err := NewSettingsStore(filepath.Join(*data, "settings.json"))
+	if err != nil {
+		log.Fatalf("cannot read settings: %v", err)
+	}
 	tunnel := NewTunnel(*socks, Mode(*mode), tunOpts, *data)
 	health := NewHealth(25 * time.Second)
 	health.StartRefresh(30*time.Second, store.List)
 
-	api := &API{store: store, tunnel: tunnel, token: token, health: health}
+	api := &API{
+		store:    store,
+		tunnel:   tunnel,
+		token:    token,
+		health:   health,
+		settings: settings,
+		started:  time.Now().UTC(),
+	}
 	srv := &http.Server{
 		Addr:              *listen,
 		Handler:           api.Routes(),
@@ -96,6 +107,10 @@ func main() {
 		os.Exit(0)
 	}()
 
+	// Boot behaviour: bring the default exit up when the Mac starts, waiting for
+	// the network rather than failing once. A manual disconnect is not undone.
+	go autoconnect(tunnel, store, settings)
+
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server: %v", err)
 	}
@@ -129,6 +144,36 @@ func userLookup(name string) (userIDs, error) {
 		return userIDs{}, err
 	}
 	return userIDs{uid: uid, gid: gid}, nil
+}
+
+// autoconnect honours "start at boot": connect to the default exit, retrying
+// while the network comes up, and give up after a couple of minutes so a dead
+// exit cannot keep the daemon busy.
+func autoconnect(t *Tunnel, store *Store, settings *SettingsStore) {
+	s := settings.Get()
+	if s.Suspended || !s.Autoconnect || s.DefaultServer == "" {
+		return
+	}
+	srv, ok := store.Get(s.DefaultServer)
+	if !ok {
+		log.Printf("autoconnect: default exit %q is no longer saved", s.DefaultServer)
+		return
+	}
+	for attempt := 1; attempt <= 24; attempt++ {
+		if err := t.Connect(srv); err != nil {
+			log.Printf("autoconnect attempt %d: %v", attempt, err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		time.Sleep(1500 * time.Millisecond)
+		if t.Status().State == "connected" {
+			log.Printf("autoconnect: connected to %s", srv.Name)
+			return
+		}
+		log.Printf("autoconnect attempt %d: tunnel did not come up, retrying", attempt)
+		time.Sleep(5 * time.Second)
+	}
+	log.Printf("autoconnect: giving up after 24 attempts")
 }
 
 func defaultDataDir() string {

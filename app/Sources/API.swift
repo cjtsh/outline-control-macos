@@ -58,6 +58,46 @@ struct TunnelStatus: Decodable, Equatable {
     }
 }
 
+/// The user's standing instructions to the service: bring the VPN up at boot,
+/// using this exit, unless the service has been switched off.
+struct Settings: Decodable, Equatable {
+    let autoconnect: Bool
+    let defaultServer: String?
+    let suspended: Bool
+
+    static let empty = Settings(autoconnect: false, defaultServer: nil, suspended: false)
+}
+
+/// The daemon itself, so the window can say what is running and whether a
+/// restart will actually come back.
+struct ServiceInfo: Decodable, Equatable {
+    let pid: Int
+    let version: String
+    let mode: String
+    let engine: String?
+    let supervised: Bool
+    let started: String?
+
+    var engineName: String {
+        guard let engine, !engine.isEmpty else { return "—" }
+        return (engine as NSString).lastPathComponent
+    }
+
+    var uptime: String? {
+        guard let started else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = f.date(from: started) ?? {
+            f.formatOptions = [.withInternetDateTime]
+            return f.date(from: started)
+        }() else { return nil }
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        if seconds < 3600 { return "\(seconds / 60)m" }
+        let h = seconds / 3600, m = (seconds % 3600) / 60
+        return "\(h)h \(m)m"
+    }
+}
+
 struct HealthView: Decodable, Equatable {
     let id: String
     let reachable: Bool
@@ -66,7 +106,19 @@ struct HealthView: Decodable, Equatable {
 
 private struct ServersEnvelope: Decodable { let servers: [ServerView] }
 private struct ExitsEnvelope: Decodable { let exits: [HealthView] }
-private struct StatusEnvelope: Decodable { let tunnel: TunnelStatus }
+struct StatusEnvelope: Decodable {
+    let tunnel: TunnelStatus
+    let settings: Settings?
+    let service: ServiceInfo?
+}
+struct SettingsEnvelope: Decodable {
+    let settings: Settings
+    let service: ServiceInfo?
+}
+struct ServiceAck: Decodable {
+    let restarting: Bool?
+    let supervised: Bool?
+}
 private struct ErrorEnvelope: Decodable { let error: String }
 
 // MARK: - Client
@@ -164,8 +216,22 @@ final class OutlineAPI {
         decode("GET", "/servers", as: ServersEnvelope.self) { completion($0.map { $0.servers }) }
     }
 
-    func status(_ completion: @escaping (Result<TunnelStatus, APIError>) -> Void) {
-        decode("GET", "/status", as: StatusEnvelope.self) { completion($0.map { $0.tunnel }) }
+    /// One poll answers everything the window shows: tunnel, settings, service.
+    func status(_ completion: @escaping (Result<StatusEnvelope, APIError>) -> Void) {
+        decode("GET", "/status", as: StatusEnvelope.self, completion: completion)
+    }
+
+    func patchSettings(_ body: [String: Any],
+                       _ completion: @escaping (Result<SettingsEnvelope, APIError>) -> Void) {
+        decode("PATCH", "/settings", body: body, as: SettingsEnvelope.self, completion: completion)
+    }
+
+    func setService(on: Bool, _ completion: @escaping (Result<SettingsEnvelope, APIError>) -> Void) {
+        decode("POST", on ? "/service/resume" : "/service/suspend", as: SettingsEnvelope.self, completion: completion)
+    }
+
+    func restartService(_ completion: @escaping (Result<ServiceAck, APIError>) -> Void) {
+        decode("POST", "/service/restart", as: ServiceAck.self, completion: completion)
     }
 
     func health(_ completion: @escaping (Result<[HealthView], APIError>) -> Void) {

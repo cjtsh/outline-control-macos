@@ -9,6 +9,8 @@ final class MainWindowController: NSWindowController {
     private var api: OutlineAPI?
     private var servers: [ServerView] = []
     private var status = TunnelStatus.empty
+    private var settings = Settings.empty
+    private var service: ServiceInfo?
     private var health: [String: HealthView] = [:]
     private var providerUp = true
     private var providerError = ""
@@ -22,6 +24,7 @@ final class MainWindowController: NSWindowController {
     private let footerText = label("", size: 11, color: Palette.tertiary)
     private let footerDot = DotView()
     private let countLabel = label("", size: 11, color: Palette.tertiary)
+    private let panel = ServicePanel()
 
     convenience init() {
         let window = NSWindow(
@@ -95,9 +98,16 @@ final class MainWindowController: NSWindowController {
         footer.spacing = 8
         footer.translatesAutoresizingMaskIntoConstraints = false
 
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.onRestart = { [weak self] in self?.restartService() }
+        panel.onPower = { [weak self] in self?.toggleService() }
+        panel.onBootToggle = { [weak self] in self?.setAutoconnect($0) }
+        panel.onDefaultChange = { [weak self] in self?.setDefault($0) }
+
         root.addSubview(headerRow)
         root.addSubview(headerState)
         root.addSubview(scroll)
+        root.addSubview(panel)
         root.addSubview(footer)
 
         NSLayoutConstraint.activate([
@@ -112,7 +122,11 @@ final class MainWindowController: NSWindowController {
             scroll.topAnchor.constraint(equalTo: headerState.bottomAnchor, constant: 16),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            scroll.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -10),
+            scroll.bottomAnchor.constraint(equalTo: panel.topAnchor, constant: -12),
+
+            panel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            panel.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            panel.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -12),
 
             document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
@@ -164,7 +178,11 @@ final class MainWindowController: NSWindowController {
                 self.providerUp = true
                 self.providerError = ""
                 api.status { statusResult in
-                    if case .success(let s) = statusResult { self.status = s }
+                    if case .success(let envelope) = statusResult {
+                        self.status = envelope.tunnel
+                        self.settings = envelope.settings ?? .empty
+                        self.service = envelope.service
+                    }
                     if self.ticks % 4 == 1 || self.health.isEmpty {
                         api.health { healthResult in
                             if case .success(let entries) = healthResult {
@@ -184,6 +202,7 @@ final class MainWindowController: NSWindowController {
         var parts: [String] = []
         parts.append(providerUp ? "up" : "down:\(providerError)")
         parts.append("\(status.state)|\(status.serverId ?? "-")|\(status.connectedFor ?? "-")|\(status.lastError ?? "-")")
+        parts.append("svc:\(settings.autoconnect)|\(settings.defaultServer ?? "-")|\(settings.suspended)|\(service?.pid ?? 0)|\(service?.uptime ?? "-")")
         for server in servers {
             let h = health[server.id].map { $0.reachable ? "ok" : "bad" } ?? "?"
             parts.append("\(server.id)|\(server.name)|\(server.address)|\(h)")
@@ -231,17 +250,27 @@ final class MainWindowController: NSWindowController {
             card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
+        panel.update(settings: settings, service: service, servers: servers)
+
         for server in servers {
             let card = CardView()
-            card.update(server: server, status: status, health: health[server.id])
+            card.update(server: server, status: status, health: health[server.id],
+                        isDefault: settings.defaultServer == server.id,
+                        serviceOn: !settings.suspended)
             card.onPrimary = { [weak self] in self?.toggle(server) }
             card.onRename = { [weak self] in self?.rename(server) }
             card.onForget = { [weak self] in self?.forget(server) }
+            card.onMakeDefault = { [weak self] in self?.setDefault(server.id) }
             stack.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
-        if status.isConnected, let name = status.serverName {
+        if settings.suspended {
+            headerState.stringValue = "Service stopped — the VPN is off and will not reconnect by itself"
+            headerState.textColor = Palette.secondary
+            footerDot.color = Palette.tertiary
+            footerText.stringValue = "SERVICE OFF"
+        } else if status.isConnected, let name = status.serverName {
             let since = status.connectedFor.map { " · \($0)" } ?? ""
             headerState.stringValue = "Connected to \(name)\(since)"
             headerState.textColor = Palette.green
@@ -285,6 +314,45 @@ final class MainWindowController: NSWindowController {
                 if case .failure(let message) = result { self.presentError(message.text) }
                 self.refresh()
             }
+        }
+    }
+
+    private func setAutoconnect(_ on: Bool) {
+        api?.patchSettings(["autoconnect": on]) { result in
+            if case .failure(let message) = result { self.presentError(message.text) }
+            self.refresh()
+        }
+    }
+
+    private func setDefault(_ id: String?) {
+        api?.patchSettings(["defaultServer": id ?? ""]) { result in
+            if case .failure(let message) = result { self.presentError(message.text) }
+            self.refresh()
+        }
+    }
+
+    private func toggleService() {
+        let turningOn = settings.suspended
+        api?.setService(on: turningOn) { result in
+            if case .failure(let message) = result { self.presentError(message.text) }
+            self.refresh()
+        }
+    }
+
+    private func restartService() {
+        if service?.supervised == false {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Restart the provider?"
+            alert.informativeText = "It was not started by launchd, so restarting it will leave it stopped. "
+                + "You would have to start it again yourself."
+            alert.addButton(withTitle: "Restart anyway")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        api?.restartService { result in
+            if case .failure(let message) = result { self.presentError(message.text) }
+            self.refresh()
         }
     }
 
