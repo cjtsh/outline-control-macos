@@ -211,6 +211,14 @@ final class ServicePanel: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Keeps the daemon line (pid · mode · engine · uptime) current between
+    /// full updates; a no-op while the service is stopped.
+    func tick(settings: Settings, service: ServiceInfo?) {
+        guard !settings.suspended, let service else { return }
+        let uptime = service.uptime.map { " · up \($0)" } ?? ""
+        detail.stringValue = "pid \(service.pid) · \(service.mode) · \(service.engineName)\(uptime)"
+    }
+
     @objc private func bootToggled() { onBootToggle?(bootSwitch.state == .on) }
     @objc private func defaultPicked() {
         let index = defaultPicker.indexOfSelectedItem
@@ -388,6 +396,14 @@ final class CardView: NSView, NSDraggingSource {
     private func canAccept(_ sender: NSDraggingInfo) -> Bool {
         guard let dragged = sender.draggingPasteboard.string(forType: .outlineCard) else { return false }
         return !dragged.isEmpty && dragged != handle.serverID
+    }
+
+    /// Keeps the "Connected · 5m" counter current between full updates. A
+    /// no-op unless this card is the exit the tunnel is on.
+    func tick(status: TunnelStatus) {
+        guard status.isConnected, status.serverId == handle.serverID else { return }
+        let since = status.connectedFor.map { " · \($0)" } ?? ""
+        stateLabel.stringValue = "Connected\(since)"
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
