@@ -1,0 +1,3 @@
+app/build/
+*.icns
+.DS_Store

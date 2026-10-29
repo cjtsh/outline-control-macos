@@ -1,0 +1,298 @@
+import AppKit
+
+// MARK: - Palette
+
+/// A deliberately cooler palette than Outline's grey-green.
+enum Palette {
+    static let window      = NSColor(srgbRed: 0.039, green: 0.055, blue: 0.118, alpha: 1) // #0A0E1E
+    static let card        = NSColor(srgbRed: 0.078, green: 0.102, blue: 0.184, alpha: 1) // #141A2F
+    static let cardEdge    = NSColor(srgbRed: 0.145, green: 0.180, blue: 0.290, alpha: 1)
+    static let accent      = NSColor(srgbRed: 0.298, green: 0.490, blue: 1.000, alpha: 1) // #4C7DFF
+    static let text        = NSColor(srgbRed: 0.910, green: 0.930, blue: 0.975, alpha: 1)
+    static let secondary   = NSColor(srgbRed: 0.580, green: 0.630, blue: 0.750, alpha: 1)
+    static let tertiary    = NSColor(srgbRed: 0.420, green: 0.470, blue: 0.600, alpha: 1)
+    static let green       = NSColor(srgbRed: 0.230, green: 0.820, blue: 0.520, alpha: 1)
+    static let amber       = NSColor(srgbRed: 0.960, green: 0.670, blue: 0.180, alpha: 1)
+    static let red         = NSColor(srgbRed: 0.945, green: 0.330, blue: 0.380, alpha: 1)
+}
+
+func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular,
+           color: NSColor = Palette.text) -> NSTextField {
+    let field = NSTextField(labelWithString: text)
+    field.font = .systemFont(ofSize: size, weight: weight)
+    field.textColor = color
+    field.lineBreakMode = .byTruncatingTail
+    field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    return field
+}
+
+func wrappingLabel(_ text: String, size: CGFloat, color: NSColor) -> NSTextField {
+    let field = label(text, size: size, color: color)
+    field.lineBreakMode = .byWordWrapping
+    field.maximumNumberOfLines = 0
+    field.cell?.wraps = true
+    field.cell?.isScrollable = false
+    return field
+}
+
+func monoLabel(_ text: String, size: CGFloat = 11, color: NSColor = Palette.tertiary) -> NSTextField {
+    let field = label(text, size: size, color: color)
+    field.font = .monospacedDigitSystemFont(ofSize: size, weight: .regular)
+    return field
+}
+
+func spacer() -> NSView {
+    let view = NSView()
+    view.setContentHuggingPriority(.init(1), for: .horizontal)
+    view.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+    view.translatesAutoresizingMaskIntoConstraints = false
+    return view
+}
+
+// MARK: - Controls
+
+final class DotView: NSView {
+    var color: NSColor = Palette.tertiary {
+        didSet { layer?.backgroundColor = color.cgColor }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        layer?.backgroundColor = color.cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 8),
+            heightAnchor.constraint(equalToConstant: 8),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+enum ButtonStyle: Equatable { case filled, outline, quiet }
+
+final class ActionButton: NSButton {
+    private var style: ButtonStyle
+    private var widthConstraint: NSLayoutConstraint?
+    var onClick: (() -> Void)?
+
+    init(title: String, style: ButtonStyle) {
+        self.style = style
+        super.init(frame: .zero)
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        translatesAutoresizingMaskIntoConstraints = false
+        setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        heightAnchor.constraint(equalToConstant: 28).isActive = true
+        target = self
+        action = #selector(tapped)
+        styleTitle(title)
+        refreshAppearance()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func setStyle(_ new: ButtonStyle) {
+        guard new != style else { return }
+        style = new
+        refreshAppearance()
+    }
+
+    func styleTitle(_ title: String) {
+        let attr = NSAttributedString(string: title, attributes: [
+            .foregroundColor: style == .outline ? Palette.accent : NSColor.white,
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .kern: 0.6,
+        ])
+        attributedTitle = attr
+        widthConstraint?.isActive = false
+        let width = ceil(attr.size().width) + 30
+        let constraint = widthAnchor.constraint(equalToConstant: max(64, width))
+        constraint.isActive = true
+        widthConstraint = constraint
+    }
+
+    @objc private func tapped() { onClick?() }
+
+    private func refreshAppearance() {
+        switch style {
+        case .filled:
+            layer?.backgroundColor = (isEnabled ? Palette.accent : Palette.accent.withAlphaComponent(0.22)).cgColor
+            layer?.borderWidth = 0
+        case .outline:
+            layer?.backgroundColor = NSColor.clear.cgColor
+            layer?.borderWidth = 1
+            layer?.borderColor = Palette.accent.withAlphaComponent(isEnabled ? 0.55 : 0.20).cgColor
+        case .quiet:
+            layer?.backgroundColor = NSColor.white.withAlphaComponent(isEnabled ? 0.06 : 0.03).cgColor
+            layer?.borderWidth = 0
+        }
+        alphaValue = isEnabled ? 1 : 0.5
+    }
+
+    override var isEnabled: Bool {
+        didSet { refreshAppearance() }
+    }
+}
+
+// MARK: - Cards
+
+final class CardView: NSView {
+    private let dot = DotView()
+    private let nameLabel = label("", size: 15, weight: .semibold)
+    private let addressLabel = monoLabel("")
+    private let stateLabel = label("", size: 11, weight: .medium, color: Palette.secondary)
+    private let primary = ActionButton(title: "CONNECT", style: .filled)
+    private let more = ActionButton(title: "⋯", style: .quiet)
+    private let rows = NSStackView()
+
+    var onPrimary: (() -> Void)?
+    var onRename: (() -> Void)?
+    var onForget: (() -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.backgroundColor = Palette.card.cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = Palette.cardEdge.cgColor
+
+        primary.onClick = { [weak self] in self?.onPrimary?() }
+        more.onClick = { [weak self] in self?.showMenu() }
+
+        let top = NSStackView(views: [dot, nameLabel, spacer(), stateLabel])
+        top.orientation = .horizontal
+        top.spacing = 8
+        top.alignment = .centerY
+
+        let bottom = NSStackView(views: [addressLabel, spacer(), more, primary])
+        bottom.orientation = .horizontal
+        bottom.spacing = 8
+        bottom.alignment = .centerY
+
+        rows.orientation = .vertical
+        rows.spacing = 10
+        rows.alignment = .leading
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        rows.addArrangedSubview(top)
+        rows.addArrangedSubview(bottom)
+        addSubview(rows)
+
+        NSLayoutConstraint.activate([
+            rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            rows.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            rows.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            top.widthAnchor.constraint(equalTo: rows.widthAnchor),
+            bottom.widthAnchor.constraint(equalTo: rows.widthAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func showMenu() {
+        let menu = NSMenu()
+        let rename = menu.addItem(withTitle: "Rename…", action: #selector(renameTapped), keyEquivalent: "")
+        rename.target = self
+        let forget = menu.addItem(withTitle: "Forget", action: #selector(forgetTapped), keyEquivalent: "")
+        forget.target = self
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: more)
+    }
+
+    @objc private func renameTapped() { onRename?() }
+    @objc private func forgetTapped() { onForget?() }
+
+    func update(server: ServerView, status: TunnelStatus, health: HealthView?) {
+        nameLabel.stringValue = server.name
+        addressLabel.stringValue = server.address
+
+        let mine = status.serverId == server.id
+        if mine && status.isConnected {
+            let since = status.connectedFor.map { " · \($0)" } ?? ""
+            stateLabel.stringValue = "Connected\(since)"
+            stateLabel.textColor = Palette.green
+            dot.color = Palette.green
+            primary.setStyle(.outline)
+            primary.styleTitle("DISCONNECT")
+            primary.isEnabled = true
+        } else if mine && status.state == "connecting" {
+            stateLabel.stringValue = "Connecting…"
+            stateLabel.textColor = Palette.amber
+            dot.color = Palette.amber
+            primary.setStyle(.filled)
+            primary.styleTitle("CONNECTING")
+            primary.isEnabled = false
+        } else if mine && status.state == "error" {
+            stateLabel.stringValue = "Failed"
+            stateLabel.textColor = Palette.red
+            dot.color = Palette.red
+            primary.setStyle(.filled)
+            primary.styleTitle("RETRY")
+            primary.isEnabled = true
+        } else {
+            switch health {
+            case .none:
+                stateLabel.stringValue = "Checking…"
+                stateLabel.textColor = Palette.tertiary
+                dot.color = Palette.tertiary
+            case .some(let h) where h.reachable:
+                stateLabel.stringValue = "Ready"
+                stateLabel.textColor = Palette.secondary
+                dot.color = Palette.accent
+            case .some:
+                stateLabel.stringValue = "Unreachable"
+                stateLabel.textColor = Palette.red
+                dot.color = Palette.red
+            }
+            primary.setStyle(.filled)
+            primary.styleTitle("CONNECT")
+            primary.isEnabled = status.state != "connecting"
+        }
+    }
+}
+
+final class MessageCard: NSView {
+    init(title: String, body: String, command: String?, actionTitle: String, onAction: @escaping () -> Void) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.backgroundColor = Palette.card.cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = Palette.cardEdge.cgColor
+
+        let heading = label(title, size: 14, weight: .semibold)
+        let text = wrappingLabel(body, size: 12, color: Palette.secondary)
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(heading)
+        stack.addArrangedSubview(text)
+        if let command {
+            let code = monoLabel(command, size: 11, color: Palette.accent)
+            code.isSelectable = true
+            stack.addArrangedSubview(code)
+        }
+        let button = ActionButton(title: actionTitle, style: .filled)
+        button.onClick = onAction
+        stack.addArrangedSubview(button)
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            text.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
