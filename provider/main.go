@@ -71,7 +71,10 @@ func main() {
 		log.Fatalf("cannot read settings: %v", err)
 	}
 	tunnel := NewTunnel(*socks, Mode(*mode), tunOpts, *data)
-	health := NewHealth(25 * time.Second)
+	// The TTL must sit above the refresh interval below: if the cache can
+	// expire between background refreshes, a /health poll re-dials every dead
+	// exit on the caller's clock (3 s each) instead of serving warm state.
+	health := NewHealth(35 * time.Second)
 	health.StartRefresh(30*time.Second, store.List)
 
 	api := &API{
@@ -236,4 +239,4 @@ func trimSpace(s string) string {
 	return s
 }
 
-const version = "0.1.7"
+const version = "0.1.8"
