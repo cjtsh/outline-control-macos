@@ -2,7 +2,7 @@
 
 [![Disclaimer](https://img.shields.io/badge/Legal-Standard_Disclaimer-critical.svg)](https://github.com/cjtsh/software-disclaimer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/cjtsh/software-disclaimer/blob/main/LICENSE)
-[![Release](https://img.shields.io/badge/release-0.1.4-brightgreen.svg)](https://github.com/cjtsh/outline-control-macos/releases/tag/v0.1.3)
+[![Release](https://img.shields.io/badge/release-0.1.4-brightgreen.svg)](https://github.com/cjtsh/outline-control-macos/releases/tag/v0.1.6)
 
 A native macOS front end for [Outline](https://getoutline.org) that can be driven
 by an API instead of by clicking.

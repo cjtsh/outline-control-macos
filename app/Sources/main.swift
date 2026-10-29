@@ -5,18 +5,18 @@ final class FlippedDocument: NSView {
     override var isFlipped: Bool { true }
 }
 
-/// The header strip is the window's handle. A plain NSView does not consume
-/// mouse events, so without this the only way to move the window is its title
-/// bar — and with `isMovableByWindowBackground` the whole card list became a
-/// window handle, which is what made dragging feel detached from the pointer.
-final class WindowDragArea: NSView {
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 {
-            window?.zoom(nil)
-            return
-        }
-        window?.performDrag(with: event)
+/// macOS restores the last window position, which can leave the window on a
+/// display that is no longer attached — or just past the edge of one. If the
+/// saved frame is not really visible anywhere, put the window back in the middle
+/// of the main screen instead of letting it open off-screen.
+func bringOnScreen(_ window: NSWindow) {
+    let needed = NSSize(width: 200, height: 120)
+    let visible = NSScreen.screens.contains { screen in
+        let overlap = screen.visibleFrame.intersection(window.frame)
+        return overlap.width >= needed.width && overlap.height >= needed.height
     }
+    guard !visible else { return }
+    window.center()
 }
 
 final class MainWindowController: NSWindowController {
@@ -49,14 +49,16 @@ final class MainWindowController: NSWindowController {
         window.title = "Outline Control"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        // Dragging the window is handled by WindowDragArea on the header.
-        // isMovableByWindowBackground would make every pixel of the card
-        // area drag the window, which fights card drags and makes the
-        // window lag behind the pointer across displays.
+        // The window moves by its title bar only. `isMovableByWindowBackground`
+        // used to make every pixel a title bar, and that background-drag path is
+        // the one that trails the pointer when it crosses displays; the real
+        // title bar uses the window server's own drag loop and stays glued to
+        // the cursor.
         window.isMovableByWindowBackground = false
         window.minSize = NSSize(width: 480, height: 420)
         window.backgroundColor = Palette.window
         window.center()
+        bringOnScreen(window)
         self.init(window: window)
         build()
         start()
@@ -131,28 +133,20 @@ final class MainWindowController: NSWindowController {
         panel.onBootToggle = { [weak self] in self?.setAutoconnect($0) }
         panel.onDefaultChange = { [weak self] in self?.setDefault($0) }
 
-        let dragArea = WindowDragArea()
-        dragArea.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(dragArea)
-        dragArea.addSubview(headerRow)
-        dragArea.addSubview(headerState)
+        root.addSubview(headerRow)
+        root.addSubview(headerState)
         root.addSubview(scroll)
         root.addSubview(panel)
         root.addSubview(footer)
 
         NSLayoutConstraint.activate([
-            dragArea.topAnchor.constraint(equalTo: root.topAnchor),
-            dragArea.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            dragArea.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            dragArea.bottomAnchor.constraint(equalTo: headerState.bottomAnchor, constant: 10),
-
-            headerRow.topAnchor.constraint(equalTo: dragArea.topAnchor, constant: 34),
-            headerRow.leadingAnchor.constraint(equalTo: dragArea.leadingAnchor, constant: 24),
-            headerRow.trailingAnchor.constraint(equalTo: dragArea.trailingAnchor, constant: -24),
+            headerRow.topAnchor.constraint(equalTo: root.topAnchor, constant: 34),
+            headerRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+            headerRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
 
             headerState.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 6),
-            headerState.leadingAnchor.constraint(equalTo: dragArea.leadingAnchor, constant: 24),
-            headerState.trailingAnchor.constraint(equalTo: dragArea.trailingAnchor, constant: -24),
+            headerState.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+            headerState.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
 
             scroll.topAnchor.constraint(equalTo: headerState.bottomAnchor, constant: 16),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
