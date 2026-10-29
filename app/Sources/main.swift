@@ -425,15 +425,41 @@ final class MainWindowController: NSWindowController {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: MainWindowController?
 
+    private var legalWindow: TermsWindowController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         buildMenu()
-        controller = MainWindowController()
-        controller?.showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
+
+        // Nothing touches the network or the daemon until the terms are accepted.
+        LegalGate.ensureAccepted { [weak self] accepted in
+            guard let self else { return }
+            guard accepted else {
+                NSApp.terminate(nil)
+                return
+            }
+            self.controller = MainWindowController()
+            self.controller?.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    @objc func showDisclaimer(_ sender: Any?) {
+        if legalWindow == nil {
+            legalWindow = TermsWindowController(
+                title: "Disclaimer and License",
+                preamble: "Terms version \(Legal.termsVersion). Published by Bitseeker LLC.",
+                body: Legal.fullTerms,
+                acceptTitle: "Close",
+                declineTitle: "Close",
+                closable: true
+            )
+        }
+        legalWindow?.runModal()
+        legalWindow?.close()
+    }
 
     private func buildMenu() {
         let main = NSMenu()
@@ -441,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Outline Control", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Disclaimer and License…", action: #selector(showDisclaimer(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Outline Control", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit Outline Control", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")

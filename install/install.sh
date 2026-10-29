@@ -7,9 +7,55 @@
 # Usage: ./install/install.sh [path/to/Outline Control.app]
 set -euo pipefail
 
+# --- acceptance (software-disclaimer standard, section 5.3) -----------------
+NOTICE_URL="https://github.com/cjtsh/software-disclaimer/blob/main/DISCLAIMER.md"
+print_notice() {
+  cat <<'NOTICE'
+Outline Control is free and open-source software, provided "AS IS" and without
+warranties. It reconfigures this Mac's network, it needs administrator rights,
+and you use it at your own risk. Keep backups. Do not use it in life-safety or
+mission-critical settings. Bitseeker LLC and its contributors disclaim liability
+as far as the law allows.
+
+Full terms: https://github.com/cjtsh/software-disclaimer/blob/main/DISCLAIMER.md
+NOTICE
+}
+
+# Fails closed: unattended runs must pass --accept-terms.
+require_acceptance() {
+  local accepted=0
+  for arg in "$@"; do
+    [ "$arg" = "--accept-terms" ] && accepted=1
+  done
+  print_notice
+  if [ "$accepted" -eq 1 ]; then
+    echo "==> terms accepted (--accept-terms)"
+    return 0
+  fi
+  if [ ! -t 0 ]; then
+    echo "" >&2
+    echo "This installer needs you to accept the terms first:" >&2
+    echo "    $0 --accept-terms $*" >&2
+    exit 1
+  fi
+  printf "\nType ACCEPT to install, or anything else to stop: "
+  read -r reply
+  if [ "$reply" != "ACCEPT" ]; then
+    echo "Not accepted; nothing was installed." >&2
+    exit 1
+  fi
+}
+
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-APP_SRC="${1:-$ROOT/app/build/Outline Control.app}"
+require_acceptance "$@"
+
+# --accept-terms is a flag, not the app path.
+POSITIONAL=()
+for arg in "$@"; do
+  [ "$arg" = "--accept-terms" ] || POSITIONAL+=("$arg")
+done
+APP_SRC="${POSITIONAL[0]:-$ROOT/app/build/Outline Control.app}"
 SUPPORT="$HOME/Library/Application Support/Outline Control"
 PLIST="$HOME/Library/LaunchAgents/sh.cjt.outline-control.plist"
 LABEL="sh.cjt.outline-control"

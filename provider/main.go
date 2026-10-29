@@ -96,6 +96,9 @@ func main() {
 	}
 	log.Printf("outline-control %s listening on http://%s (mode %s, engine %s)",
 		version, ln.Addr(), tunnel.mode, backend)
+	// Notice, not assent: the GUI and the installer are where terms are accepted.
+	log.Print("provided AS IS, without warranty — MIT, © Bitseeker LLC. " +
+		"Terms: https://github.com/cjtsh/software-disclaimer/blob/main/DISCLAIMER.md")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

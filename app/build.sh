@@ -20,7 +20,7 @@ for arch in arm64 x86_64; do
   swiftc -O -target "$arch-apple-macos13.0" \
     -module-cache-path "$MODCACHE" \
     -o "build/OutlineControl-$arch" \
-    Sources/main.swift Sources/API.swift Sources/Views.swift
+    Sources/main.swift Sources/API.swift Sources/Views.swift Sources/Legal.swift
 done
 lipo -create -output build/OutlineControl build/OutlineControl-arm64 build/OutlineControl-x86_64 >/dev/null
 rm -f build/OutlineControl-arm64 build/OutlineControl-x86_64
@@ -39,6 +39,11 @@ cp Info.plist "$BUNDLE/Contents/Info.plist"
 cp build/OutlineControl "$BUNDLE/Contents/MacOS/OutlineControl"
 cp build/AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
 cp build/outline-controld "$BUNDLE/Contents/MacOS/outline-controld"
+
+# Legal notice travels with the binary, not just with the repository.
+cp Resources/FIRST-RUN-NOTICE.txt "$BUNDLE/Contents/Resources/FIRST-RUN-NOTICE.txt"
+cp ../DISCLAIMER.md "$BUNDLE/Contents/Resources/DISCLAIMER.md"
+cp ../LICENSE "$BUNDLE/Contents/Resources/LICENSE"
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
 
 codesign --force --deep --sign - "$BUNDLE" >/dev/null 2>&1 || true

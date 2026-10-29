@@ -5,12 +5,51 @@
 # taking the default route away from the Mac needs root, and only a daemon
 # survives logout and reboot.
 #
-#   sudo ./install/install-tunnel.sh [--exclude-host NAME] [--exclude-cidr CIDR]
+#   sudo ./install/install-tunnel.sh [--accept-terms] [--exclude-host NAME] [--exclude-cidr CIDR]
 #
 # Exclusions are the addresses that must keep working when the VPN is dead —
 # in practice the relay the phone talks to. Pass them once, they are baked into
 # the daemon's arguments.
 set -euo pipefail
+
+# --- acceptance (software-disclaimer standard, section 5.3) -----------------
+NOTICE_URL="https://github.com/cjtsh/software-disclaimer/blob/main/DISCLAIMER.md"
+print_notice() {
+  cat <<'NOTICE'
+Outline Control is free and open-source software, provided "AS IS" and without
+warranties. It reconfigures this Mac's network, it needs administrator rights,
+and you use it at your own risk. Keep backups. Do not use it in life-safety or
+mission-critical settings. Bitseeker LLC and its contributors disclaim liability
+as far as the law allows.
+
+Full terms: https://github.com/cjtsh/software-disclaimer/blob/main/DISCLAIMER.md
+NOTICE
+}
+
+# Fails closed: unattended runs must pass --accept-terms.
+require_acceptance() {
+  local accepted=0
+  for arg in "$@"; do
+    [ "$arg" = "--accept-terms" ] && accepted=1
+  done
+  print_notice
+  if [ "$accepted" -eq 1 ]; then
+    echo "==> terms accepted (--accept-terms)"
+    return 0
+  fi
+  if [ ! -t 0 ]; then
+    echo "" >&2
+    echo "This installer needs you to accept the terms first:" >&2
+    echo "    $0 --accept-terms $*" >&2
+    exit 1
+  fi
+  printf "\nType ACCEPT to install, or anything else to stop: "
+  read -r reply
+  if [ "$reply" != "ACCEPT" ]; then
+    echo "Not accepted; nothing was installed." >&2
+    exit 1
+  fi
+}
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${OUTLINE_CONTROL_DATA:-$HOME/Library/Application Support/Outline Control}"
@@ -19,10 +58,13 @@ PLIST="/Library/LaunchDaemons/$LABEL.plist"
 BIN_DIR="/Library/Application Support/Outline Control"
 EXCLUDES=()
 
+ACCEPT_TERMS=0
+ORIGINAL_ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --exclude-host) EXCLUDES+=(-exclude-host "$2"); shift 2 ;;
     --exclude-cidr) EXCLUDES+=(-exclude-cidr "$2"); shift 2 ;;
+    --accept-terms) ACCEPT_TERMS=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -31,6 +73,8 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "This installer has to run as root: sudo $0 $*" >&2
   exit 1
 fi
+
+require_acceptance "${ORIGINAL_ARGS[@]}"
 
 TARGET_USER="${SUDO_USER:-$(stat -f '%Su' /dev/console)}"
 if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
